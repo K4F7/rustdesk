@@ -92,6 +92,11 @@ class _RawTouchGestureDetectorRegionState
   int _cacheLongPressPositionTs = 0;
   double _mouseScrollIntegral = 0; // mouse scroll speed controller
   double _scale = 1;
+  double _twoFingerScrollIntegral = 0;
+  double _twoFingerZoomIntegral = 0;
+  double _lastTwoFingerScale = 1.0;
+  bool _isRightDragActive = false;
+  Offset _lastRightDragPosition = Offset.zero;
 
   // Workaround tap down event when two fingers are used to scale(mobile)
   TapDownDetails? _lastTapDownDetails;
@@ -237,13 +242,44 @@ class _RawTouchGestureDetectorRegionState
     }
   }
 
+  onLongPressStart(LongPressStartDetails d) async {
+    lastDeviceKind = d.kind;
+    if (isNotTouchBasedDevice()) {
+      return;
+    }
+    if (ffiModel.isPeerMobile) {
+      return;
+    }
+    if (handleTouch) {
+      if (!ffi.cursorModel.isInRemoteRect(d.localPosition)) {
+        return;
+      }
+      await ffi.cursorModel.move(d.localPosition.dx, d.localPosition.dy);
+    } else {
+      _lastTapDownPositionForMouseMode = d.localPosition;
+      if (shouldBlockMouseModeEvent()) {
+        return;
+      }
+    }
+    _isRightDragActive = true;
+    _lastRightDragPosition = d.localPosition;
+    await inputModel.tapDown(MouseButtons.right);
+  }
+
   onLongPressUp() async {
     if (isNotTouchBasedDevice()) {
       return;
     }
     if (handleTouch) {
-      await inputModel.tapUp(MouseButtons.left);
+      if (ffiModel.isPeerMobile) {
+        await inputModel.tapUp(MouseButtons.left);
+      } else if (_isRightDragActive) {
+        await inputModel.tapUp(MouseButtons.right);
+      }
+    } else if (_isRightDragActive) {
+      await inputModel.tapUp(MouseButtons.right);
     }
+    _isRightDragActive = false;
   }
 
   // for mobiles
@@ -251,28 +287,22 @@ class _RawTouchGestureDetectorRegionState
     if (isNotTouchBasedDevice()) {
       return;
     }
-    if (!ffi.ffiModel.isPeerMobile) {
-      if (handleTouch) {
-        final isMoved = await ffi.cursorModel
-            .move(_cacheLongPressPosition.dx, _cacheLongPressPosition.dy);
-        if (!isMoved) {
-          return;
-        }
-      } else {
-        if (shouldBlockMouseModeEvent()) {
-          return;
-        }
-      }
-      await inputModel.tap(MouseButtons.right);
-    } else {
-      // It's better to send a message to tell the controlled device that the long press event is triggered.
-      // We're now using a `TimerTask` in `InputService.kt` to decide whether to trigger the long press event.
-      // It's not accurate and it's better to use the same detection logic in the controlling side.
-    }
+    // It's better to send a message to tell the controlled device that the long press event is triggered.
+    // We're now using a `TimerTask` in `InputService.kt` to decide whether to trigger the long press event.
+    // It's not accurate and it's better to use the same detection logic in the controlling side.
   }
 
   onLongPressMoveUpdate(LongPressMoveUpdateDetails d) async {
-    if (!ffiModel.isPeerMobile || isNotTouchBasedDevice()) {
+    if (isNotTouchBasedDevice()) {
+      return;
+    }
+    if (_isRightDragActive && !ffiModel.isPeerMobile) {
+      final delta = d.localPosition - _lastRightDragPosition;
+      _lastRightDragPosition = d.localPosition;
+      await ffi.cursorModel.updatePan(delta, d.localPosition, handleTouch);
+      return;
+    }
+    if (!ffiModel.isPeerMobile) {
       return;
     }
     if (handleTouch) {
@@ -345,6 +375,9 @@ class _RawTouchGestureDetectorRegionState
     if (isNotTouchBasedDevice()) {
       return;
     }
+    if (_isRightDragActive) {
+      return;
+    }
     if (handleTouch) {
       if (lastTapDownDetails != null) {
         await ffi.cursorModel.move(lastTapDownDetails.localPosition.dx,
@@ -391,6 +424,9 @@ class _RawTouchGestureDetectorRegionState
     if (isNotTouchBasedDevice()) {
       return;
     }
+    if (_isRightDragActive) {
+      return;
+    }
     if (ffi.cursorModel.shouldBlock(d.localPosition.dx, d.localPosition.dy)) {
       return;
     }
@@ -403,6 +439,9 @@ class _RawTouchGestureDetectorRegionState
   onOneFingerPanEnd(DragEndDetails d) async {
     _touchModePanStarted = false;
     if (isNotTouchBasedDevice()) {
+      return;
+    }
+    if (_isRightDragActive) {
       return;
     }
     if (isDesktop || isWebDesktop) {
@@ -419,10 +458,20 @@ class _RawTouchGestureDetectorRegionState
     if (isNotTouchBasedDevice()) {
       return;
     }
+    _twoFingerScrollIntegral = 0;
+    _twoFingerZoomIntegral = 0;
+    _lastTwoFingerScale = 1.0;
     if (isSpecialHoldDragActive) {
       // Initialize the last focal point to calculate deltas manually.
       _lastSpecialHoldDragFocalPoint = d.focalPoint;
     }
+  }
+
+  Future<void> _sendScrollWithCtrl(int y) async {
+    final previousCtrl = inputModel.ctrl;
+    inputModel.ctrl = true;
+    await inputModel.scroll(y);
+    inputModel.ctrl = previousCtrl;
   }
 
   onTwoFingerScaleUpdate(ScaleUpdateDetails d) async {
@@ -453,10 +502,36 @@ class _RawTouchGestureDetectorRegionState
       }
     } else {
       // mobile
-      ffi.canvasModel.updateScale(d.scale / _scale, d.focalPoint);
-      _scale = d.scale;
-      ffi.canvasModel.panX(d.focalPointDelta.dx);
-      ffi.canvasModel.panY(d.focalPointDelta.dy);
+      final focalPoint = d.localFocalPoint;
+      if (!ffi.cursorModel.isInRemoteRect(focalPoint)) {
+        return;
+      }
+
+      final scaleDelta = d.scale - _lastTwoFingerScale;
+      _lastTwoFingerScale = d.scale;
+      final isPinch = scaleDelta.abs() > 0.02;
+
+      if (isPinch) {
+        await ffi.cursorModel.move(focalPoint.dx, focalPoint.dy);
+        _twoFingerZoomIntegral += scaleDelta * 50;
+        while (_twoFingerZoomIntegral.abs() >= 1) {
+          final step = _twoFingerZoomIntegral > 0 ? 1 : -1;
+          await _sendScrollWithCtrl(step);
+          _twoFingerZoomIntegral += _twoFingerZoomIntegral > 0 ? -1 : 1;
+        }
+        _twoFingerScrollIntegral = 0;
+      } else {
+        _twoFingerScrollIntegral += d.focalPointDelta.dy / 4;
+        if (_twoFingerScrollIntegral > 1) {
+          await ffi.cursorModel.move(focalPoint.dx, focalPoint.dy);
+          await inputModel.scroll(1);
+          _twoFingerScrollIntegral = 0;
+        } else if (_twoFingerScrollIntegral < -1) {
+          await ffi.cursorModel.move(focalPoint.dx, focalPoint.dy);
+          await inputModel.scroll(-1);
+          _twoFingerScrollIntegral = 0;
+        }
+      }
     }
   }
 
@@ -473,11 +548,11 @@ class _RawTouchGestureDetectorRegionState
     } else {
       // mobile
       _scale = 1;
+      _lastTwoFingerScale = 1.0;
+      _twoFingerScrollIntegral = 0;
+      _twoFingerZoomIntegral = 0;
       // No idea why we need to set the view style to "" here.
       // bind.sessionSetViewStyle(sessionId: sessionId, value: "");
-    }
-    if (!isSpecialHoldDragActive) {
-      await inputModel.sendMouse('up', MouseButtons.left);
     }
   }
 
@@ -518,6 +593,7 @@ class _RawTouchGestureDetectorRegionState
               () => LongPressGestureRecognizer(), (instance) {
         instance
           ..onLongPressDown = onLongPressDown
+          ..onLongPressStart = onLongPressStart
           ..onLongPressUp = onLongPressUp
           ..onLongPress = onLongPress
           ..onLongPressMoveUpdate = onLongPressMoveUpdate;

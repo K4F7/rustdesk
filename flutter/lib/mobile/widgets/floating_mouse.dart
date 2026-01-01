@@ -27,6 +27,19 @@ double? _tryParseCoordinateFromEvt(Map<String, dynamic>? evt, String key) {
   return double.tryParse(coord);
 }
 
+class _MouseButtonDispatcher {
+  final InputModel? inputModel;
+  const _MouseButtonDispatcher(this.inputModel);
+
+  Future<void> press(MouseButtons button) async {
+    await inputModel?.tapDown(button);
+  }
+
+  Future<void> release(MouseButtons button) async {
+    await inputModel?.tapUp(button);
+  }
+}
+
 class FloatingMouse extends StatefulWidget {
   final FFI ffi;
   const FloatingMouse({
@@ -783,6 +796,21 @@ class _MouseBodyState extends State<MouseBody> {
   bool _rightDown = false;
   bool _midDown = false;
   bool _dragDown = false;
+  late _MouseButtonDispatcher _dispatcher;
+
+  @override
+  void initState() {
+    super.initState();
+    _dispatcher = _MouseButtonDispatcher(widget.inputModel);
+  }
+
+  @override
+  void didUpdateWidget(MouseBody oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.inputModel != widget.inputModel) {
+      _dispatcher = _MouseButtonDispatcher(widget.inputModel);
+    }
+  }
 
   Widget _buildScrollUpDown(GlobalKey key, IconData iconData, double s) {
     return Container(
@@ -803,7 +831,7 @@ class _MouseBodyState extends State<MouseBody> {
               widget.resetCollapseTimer?.call();
               setState(() {
                 _midDown = true;
-                widget.inputModel?.tapDown(MouseButtons.wheel);
+                _dispatcher.press(MouseButtons.wheel);
               });
             }
           : null,
@@ -811,7 +839,7 @@ class _MouseBodyState extends State<MouseBody> {
           ? (event) {
               setState(() {
                 _midDown = false;
-                widget.inputModel?.tapUp(MouseButtons.wheel);
+                _dispatcher.release(MouseButtons.wheel);
                 widget.cancelCanvasScroll?.call();
               });
             }
@@ -820,7 +848,7 @@ class _MouseBodyState extends State<MouseBody> {
           ? (event) {
               setState(() {
                 _midDown = false;
-                widget.inputModel?.tapUp(MouseButtons.wheel);
+                _dispatcher.release(MouseButtons.wheel);
                 widget.cancelCanvasScroll?.call();
               });
             }
@@ -893,24 +921,21 @@ class _MouseBodyState extends State<MouseBody> {
                                       widget.resetCollapseTimer?.call();
                                       setState(() {
                                         _leftDown = true;
-                                        widget.inputModel
-                                            ?.tapDown(MouseButtons.left);
+                                        _dispatcher.press(MouseButtons.left);
                                       });
                                     }
                                   : null,
                               onPointerUp: widget.inputModel != null
                                   ? (event) => setState(() {
                                         _leftDown = false;
-                                        widget.inputModel
-                                            ?.tapUp(MouseButtons.left);
+                                        _dispatcher.release(MouseButtons.left);
                                         widget.cancelCanvasScroll?.call();
                                       })
                                   : null,
                               onPointerCancel: widget.inputModel != null
                                   ? (event) => setState(() {
                                         _leftDown = false;
-                                        widget.inputModel
-                                            ?.tapUp(MouseButtons.left);
+                                        _dispatcher.release(MouseButtons.left);
                                         widget.cancelCanvasScroll?.call();
                                       })
                                   : null,
@@ -941,24 +966,21 @@ class _MouseBodyState extends State<MouseBody> {
                                       widget.resetCollapseTimer?.call();
                                       setState(() {
                                         _rightDown = true;
-                                        widget.inputModel
-                                            ?.tapDown(MouseButtons.right);
+                                        _dispatcher.press(MouseButtons.right);
                                       });
                                     }
                                   : null,
                               onPointerUp: widget.inputModel != null
                                   ? (event) => setState(() {
                                         _rightDown = false;
-                                        widget.inputModel
-                                            ?.tapUp(MouseButtons.right);
+                                        _dispatcher.release(MouseButtons.right);
                                         widget.cancelCanvasScroll?.call();
                                       })
                                   : null,
                               onPointerCancel: widget.inputModel != null
                                   ? (event) => setState(() {
                                         _rightDown = false;
-                                        widget.inputModel
-                                            ?.tapUp(MouseButtons.right);
+                                        _dispatcher.release(MouseButtons.right);
                                         widget.cancelCanvasScroll?.call();
                                       })
                                   : null,

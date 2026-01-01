@@ -31,6 +31,21 @@ final Color _kTapDownColor = Colors.blue.withOpacity(0.7);
 final Color _kWidgetHighlightColor = Colors.white.withOpacity(0.9);
 const int _kInputTimerIntervalMillis = 100;
 
+class _MouseButtonDispatcher {
+  final InputModel inputModel;
+  const _MouseButtonDispatcher(this.inputModel);
+
+  Future<void> press(MouseButtons button) => inputModel.tapDown(button);
+
+  Future<void> release(MouseButtons button) => inputModel.tapUp(button);
+
+  Future<void> tap(MouseButtons button) async {
+    await press(button);
+    await Future.delayed(const Duration(milliseconds: 50));
+    await release(button);
+  }
+}
+
 class FloatingMouseWidgets extends StatefulWidget {
   final FFI ffi;
   const FloatingMouseWidgets({
@@ -121,6 +136,7 @@ class _FloatingWheelState extends State<FloatingWheel> {
   Orientation? _previousOrientation;
 
   Timer? _scrollTimer;
+  late final _MouseButtonDispatcher _dispatcher;
 
   InputModel get _inputModel => widget.inputModel;
   CursorModel get _cursorModel => widget.cursorModel;
@@ -128,6 +144,7 @@ class _FloatingWheelState extends State<FloatingWheel> {
   @override
   void initState() {
     super.initState();
+    _dispatcher = _MouseButtonDispatcher(_inputModel);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _resetPosition();
     });
@@ -250,19 +267,19 @@ class _FloatingWheelState extends State<FloatingWheel> {
               setState(() {
                 _isMidDown = true;
               });
-              _inputModel.tapDown(MouseButtons.wheel);
+              _dispatcher.press(MouseButtons.wheel);
             },
             onPointerUp: (event) {
               setState(() {
                 _isMidDown = false;
               });
-              _inputModel.tapUp(MouseButtons.wheel);
+              _dispatcher.release(MouseButtons.wheel);
             },
             onPointerCancel: (event) {
               setState(() {
                 _isMidDown = false;
               });
-              _inputModel.tapUp(MouseButtons.wheel);
+              _dispatcher.release(MouseButtons.wheel);
             },
             child: Container(
               width: _wheelWidth,
@@ -378,6 +395,7 @@ class _FloatingLeftRightButtonState extends State<FloatingLeftRightButton> {
   Timer? _tapDownTimer;
   final Duration _pressTimeout = const Duration(milliseconds: 200);
   bool _isDragging = false;
+  late final _MouseButtonDispatcher _dispatcher;
 
   bool get _isLeft => widget.isLeft;
   InputModel get _inputModel => widget.inputModel;
@@ -386,6 +404,7 @@ class _FloatingLeftRightButtonState extends State<FloatingLeftRightButton> {
   @override
   void initState() {
     super.initState();
+    _dispatcher = _MouseButtonDispatcher(_inputModel);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final currentOrientation = MediaQuery.of(context).orientation;
       _previousOrientation = currentOrientation;
@@ -576,8 +595,8 @@ class _FloatingLeftRightButtonState extends State<FloatingLeftRightButton> {
             isSpecialHoldDragActive = true;
             () async {
               await _cursorModel.syncCursorPosition();
-              await _inputModel
-                  .tapDown(_isLeft ? MouseButtons.left : MouseButtons.right);
+              await _dispatcher
+                  .press(_isLeft ? MouseButtons.left : MouseButtons.right);
             }();
             _tapDownTimer = null;
           });
@@ -592,19 +611,13 @@ class _FloatingLeftRightButtonState extends State<FloatingLeftRightButton> {
             _tapDownTimer!.cancel();
             _tapDownTimer = null;
             // Fire tap down and up quickly.
-            _inputModel
-                .tapDown(_isLeft ? MouseButtons.left : MouseButtons.right)
-                .then(
-                    (_) => Future.delayed(const Duration(milliseconds: 50), () {
-                          _inputModel.tapUp(
-                              _isLeft ? MouseButtons.left : MouseButtons.right);
-                        }));
+            _dispatcher.tap(_isLeft ? MouseButtons.left : MouseButtons.right);
           } else {
             // If it's not a quick tap, it could be a hold or drag.
             // If it was a hold, isSpecialHoldDragActive is true.
             if (isSpecialHoldDragActive) {
-              _inputModel
-                  .tapUp(_isLeft ? MouseButtons.left : MouseButtons.right);
+              _dispatcher.release(
+                  _isLeft ? MouseButtons.left : MouseButtons.right);
             }
           }
 
@@ -621,7 +634,8 @@ class _FloatingLeftRightButtonState extends State<FloatingLeftRightButton> {
           _tapDownTimer?.cancel();
           _tapDownTimer = null;
           if (isSpecialHoldDragActive) {
-            _inputModel.tapUp(_isLeft ? MouseButtons.left : MouseButtons.right);
+            _dispatcher
+                .release(_isLeft ? MouseButtons.left : MouseButtons.right);
           }
           isSpecialHoldDragActive = false;
           if (_isDragging) {
