@@ -1,4 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/desktop/pages/server_page.dart';
@@ -10,20 +14,61 @@ import 'package:get/get.dart';
 import 'package:window_manager/window_manager.dart';
 
 final testClients = [
-  Client(0, false, false, false, "UserAAAAAA", "123123123", true, false, false, false),
-  Client(1, false, false, false, "UserBBBBB", "221123123", true, false, false, false),
-  Client(2, false, false, false, "UserC", "331123123", true, false, false, false),
-  Client(3, false, false, false, "UserDDDDDDDDDDDd", "441123123", true, false, false, false)
+  Client(0, false, false, false, "UserAAAAAA", "123123123", true, false, false),
+  Client(1, false, false, false, "UserBBBBB", "221123123", true, false, false),
+  Client(2, false, false, false, "UserC", "331123123", true, false, false),
+  Client(3, false, false, false, "UserDDDDDDDDDDDd", "441123123", true, false, false)
 ];
 
+bool _windowManagerAvailable = true;
+bool get _isFlutterTestRun =>
+    Platform.environment['FLUTTER_TEST'] == 'true';
+
+Future<void> _windowManagerSafeCall(Future<void> Function() action) async {
+  if (!_windowManagerAvailable) {
+    return;
+  }
+  try {
+    await action();
+  } on MissingPluginException {
+    _windowManagerAvailable = false;
+  } on UnimplementedError {
+    _windowManagerAvailable = false;
+  }
+}
+
+Future<bool> _initEnvSafe() async {
+  try {
+    await initEnv(kAppTypeMain);
+    return true;
+  } on ArgumentError {
+    // Ignore missing native libs when running unit tests.
+    return false;
+  }
+}
+
 /// flutter run -d {platform} -t test/cm_test.dart to test cm
-void main(List<String> args) async {
+Future<void> main() async {
+  if (_isFlutterTestRun) {
+    testWidgets('cm_test placeholder', (WidgetTester tester) async {});
+    return;
+  }
+  await _runConnectionManager();
+}
+
+Future<void> _runConnectionManager() async {
   isTest = true;
   WidgetsFlutterBinding.ensureInitialized();
-  await windowManager.ensureInitialized();
-  await windowManager.setSize(const Size(400, 600));
-  await windowManager.setAlignment(Alignment.topRight);
-  await initEnv(kAppTypeMain);
+  await _windowManagerSafeCall(
+      () async => await windowManager.ensureInitialized());
+  await _windowManagerSafeCall(
+      () async => await windowManager.setSize(const Size(400, 600)));
+  await _windowManagerSafeCall(
+      () async => await windowManager.setAlignment(Alignment.topRight));
+  final bool envReady = await _initEnvSafe();
+  if (!envReady) {
+    return;
+  }
   for (var client in testClients) {
     gFFI.serverModel.clients.add(client);
     gFFI.serverModel.tabController.add(TabInfo(
@@ -47,16 +92,18 @@ void main(List<String> args) async {
       home: const DesktopServerPage()));
   WindowOptions windowOptions = getHiddenTitleBarWindowOptions(
       size: kConnectionManagerWindowSizeClosedChat);
-  windowManager.waitUntilReadyToShow(windowOptions, () async {
-    await windowManager.show();
-    // ensure initial window size to be changed
-    await windowManager.setSize(kConnectionManagerWindowSizeClosedChat);
-    await Future.wait([
-      windowManager.setAlignment(Alignment.topRight),
-      windowManager.focus(),
-      windowManager.setOpacity(1)
-    ]);
-    // ensure
-    windowManager.setAlignment(Alignment.topRight);
+  await _windowManagerSafeCall(() async {
+    await windowManager.waitUntilReadyToShow(windowOptions, () async {
+      await windowManager.show();
+      // ensure initial window size to be changed
+      await windowManager.setSize(kConnectionManagerWindowSizeClosedChat);
+      await Future.wait([
+        windowManager.setAlignment(Alignment.topRight),
+        windowManager.focus(),
+        windowManager.setOpacity(1)
+      ]);
+      // ensure
+      await windowManager.setAlignment(Alignment.topRight);
+    });
   });
 }

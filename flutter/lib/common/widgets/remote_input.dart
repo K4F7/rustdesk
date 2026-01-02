@@ -243,7 +243,6 @@ class _RawTouchGestureDetectorRegionState
   }
 
   onLongPressStart(LongPressStartDetails d) async {
-    lastDeviceKind = d.kind;
     if (isNotTouchBasedDevice()) {
       return;
     }
