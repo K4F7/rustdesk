@@ -9,6 +9,7 @@ import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/mobile/widgets/floating_mouse.dart';
 import 'package:flutter_hbb/mobile/widgets/floating_mouse_widgets.dart';
 import 'package:flutter_hbb/mobile/widgets/gesture_help.dart';
+import 'package:flutter_hbb/mobile/widgets/custom_shortcuts.dart';
 import 'package:flutter_hbb/models/chat_model.dart';
 import 'package:flutter_keyboard_visibility/flutter_keyboard_visibility.dart';
 import 'package:flutter_svg/svg.dart';
@@ -205,6 +206,10 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
 
   void onSoftKeyboardChanged(bool visible) {
     if (!visible) {
+      _timer?.cancel();
+      if (_showEdit) {
+        setState(() => _showEdit = false);
+      }
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual, overlays: []);
       // [pi.version.isNotEmpty] -> check ready or not, avoid login without soft-keyboard
       if (gFFI.chatModel.chatWindowOverlayEntry == null &&
@@ -332,6 +337,18 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     inputModel.inputKey(char);
   }
 
+  void closeSoftKeyboard() {
+    if (!mounted) {
+      return;
+    }
+    _timer?.cancel();
+    _timer = null;
+    setState(() => _showEdit = false);
+    gFFI.invokeMethod("enable_soft_keyboard", false);
+    _mobileFocusNode.unfocus();
+    _physicalFocusNode.requestFocus();
+  }
+
   void openKeyboard() {
     gFFI.invokeMethod("enable_soft_keyboard", true);
     // destroy first, so that our _value trick can work
@@ -388,10 +405,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                   onPressed: () {
                     setState(() {
                       if (keyboardIsVisible) {
-                        _showEdit = false;
-                        gFFI.invokeMethod("enable_soft_keyboard", false);
-                        _mobileFocusNode.unfocus();
-                        _physicalFocusNode.requestFocus();
+                        closeSoftKeyboard();
                       } else if (_showGestureHelp) {
                         _showGestureHelp = false;
                       } else {
@@ -572,7 +586,8 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       !gFFI.ffiModel.isPeerAndroid && !gFFI.canvasModel.cursorEmbedded;
 
   Widget getBodyForMobile() {
-    final keyboardIsVisible = keyboardVisibilityController.isVisible;
+    final keyboardIsVisible =
+        keyboardVisibilityController.isVisible && _showEdit;
     return Container(
         color: MyTheme.canvasColor,
         child: Stack(children: () {
@@ -629,6 +644,12 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
               ffi: gFFI,
             ));
           }
+          paints.add(CustomShortcutOverlay(
+            inputModel: gFFI.inputModel,
+            onOpenKeyboard: openKeyboard,
+            onCloseKeyboard: closeSoftKeyboard,
+            keyboardIsVisible: keyboardIsVisible,
+          ));
           return paints;
         }()));
   }

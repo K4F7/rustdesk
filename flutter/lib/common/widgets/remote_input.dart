@@ -95,6 +95,8 @@ class _RawTouchGestureDetectorRegionState
   double _twoFingerScrollIntegral = 0;
   double _twoFingerZoomIntegral = 0;
   double _lastTwoFingerScale = 1.0;
+  Offset _lastTwoFingerFocalPoint = Offset.zero;
+  bool _hasTwoFingerFocalPoint = false;
   bool _isRightDragActive = false;
   Offset _lastRightDragPosition = Offset.zero;
 
@@ -107,6 +109,8 @@ class _RawTouchGestureDetectorRegionState
   // `onDoubleTap()` does not provide the position of the tap event.
   Offset _lastPosOfDoubleTapDown = Offset.zero;
   bool _touchModePanStarted = false;
+  bool _suppressCtrlForPan = false;
+  bool _ctrlBeforePan = false;
   Offset _doubleFinerTapPosition = Offset.zero;
 
   // For mouse mode, we need to block the events when the cursor is in a blocked area.
@@ -404,6 +408,11 @@ class _RawTouchGestureDetectorRegionState
         await ffi.cursorModel
             .move(_cacheLongPressPosition.dx, _cacheLongPressPosition.dy);
       }
+      if (inputModel.ctrl) {
+        _suppressCtrlForPan = true;
+        _ctrlBeforePan = inputModel.ctrl;
+        inputModel.ctrl = false;
+      }
       await inputModel.sendMouse('down', MouseButtons.left);
       await ffi.cursorModel.move(d.localPosition.dx, d.localPosition.dy);
     } else {
@@ -448,6 +457,10 @@ class _RawTouchGestureDetectorRegionState
     }
     if (handleTouch) {
       await inputModel.sendMouse('up', MouseButtons.left);
+      if (_suppressCtrlForPan) {
+        inputModel.ctrl = _ctrlBeforePan;
+        _suppressCtrlForPan = false;
+      }
     }
   }
 
@@ -460,6 +473,8 @@ class _RawTouchGestureDetectorRegionState
     _twoFingerScrollIntegral = 0;
     _twoFingerZoomIntegral = 0;
     _lastTwoFingerScale = 1.0;
+    _lastTwoFingerFocalPoint = d.localFocalPoint;
+    _hasTwoFingerFocalPoint = true;
     if (isSpecialHoldDragActive) {
       // Initialize the last focal point to calculate deltas manually.
       _lastSpecialHoldDragFocalPoint = d.focalPoint;
@@ -509,6 +524,11 @@ class _RawTouchGestureDetectorRegionState
       final scaleDelta = d.scale - _lastTwoFingerScale;
       _lastTwoFingerScale = d.scale;
       final isPinch = scaleDelta.abs() > 0.02;
+      final focalDelta = _hasTwoFingerFocalPoint
+          ? d.localFocalPoint - _lastTwoFingerFocalPoint
+          : d.focalPointDelta;
+      _lastTwoFingerFocalPoint = d.localFocalPoint;
+      _hasTwoFingerFocalPoint = true;
 
       if (isPinch) {
         await ffi.cursorModel.move(focalPoint.dx, focalPoint.dy);
@@ -520,7 +540,7 @@ class _RawTouchGestureDetectorRegionState
         }
         _twoFingerScrollIntegral = 0;
       } else {
-        _twoFingerScrollIntegral += d.focalPointDelta.dy / 4;
+        _twoFingerScrollIntegral += focalDelta.dy / 4;
         if (_twoFingerScrollIntegral > 1) {
           await ffi.cursorModel.move(focalPoint.dx, focalPoint.dy);
           await inputModel.scroll(1);
@@ -550,6 +570,7 @@ class _RawTouchGestureDetectorRegionState
       _lastTwoFingerScale = 1.0;
       _twoFingerScrollIntegral = 0;
       _twoFingerZoomIntegral = 0;
+      _hasTwoFingerFocalPoint = false;
       // No idea why we need to set the view style to "" here.
       // bind.sessionSetViewStyle(sessionId: sessionId, value: "");
     }
@@ -616,6 +637,8 @@ class _RawTouchGestureDetectorRegionState
       CustomTouchGestureRecognizer:
           GestureRecognizerFactoryWithHandlers<CustomTouchGestureRecognizer>(
               () => CustomTouchGestureRecognizer(), (instance) {
+        instance.shouldAcceptPointer =
+            (offset) => !ffi.cursorModel.shouldBlock(offset.dx, offset.dy);
         instance.onOneFingerPanStart =
             (DragStartDetails d) => onOneFingerPanStart(context, d);
         instance

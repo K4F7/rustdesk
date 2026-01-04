@@ -338,3 +338,97 @@ class TrackpadSpeedWidgetState extends State<TrackpadSpeedWidget> {
     );
   }
 }
+
+class MouseWheelSensitivityWidget extends StatefulWidget {
+  final SimpleWrapper<int> value;
+  final Function(int)? onDebouncer;
+
+  MouseWheelSensitivityWidget({Key? key, required this.value, this.onDebouncer});
+
+  @override
+  MouseWheelSensitivityWidgetState createState() =>
+      MouseWheelSensitivityWidgetState();
+}
+
+class MouseWheelSensitivityWidgetState
+    extends State<MouseWheelSensitivityWidget> {
+  final TextEditingController _controller = TextEditingController();
+  late final Debouncer<int> debouncerSensitivity;
+
+  set value(int v) => widget.value.value = v;
+  int get value => widget.value.value;
+
+  void updateValue(int newValue) {
+    setState(() {
+      value = newValue.clamp(
+          kMinMouseWheelSensitivity, kMaxMouseWheelSensitivity);
+      _controller.text = value.toString();
+      if (widget.onDebouncer != null) {
+        debouncerSensitivity.setValue(value);
+      }
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    debouncerSensitivity = Debouncer<int>(
+      Duration(milliseconds: 1000),
+      onChanged: widget.onDebouncer,
+      initialValue: widget.value.value,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_controller.text.isEmpty) {
+      _controller.text = value.toString();
+    }
+    return Row(
+      children: [
+        Expanded(
+          flex: 3,
+          child: Slider(
+            value: value.toDouble(),
+            min: kMinMouseWheelSensitivity.toDouble(),
+            max: kMaxMouseWheelSensitivity.toDouble(),
+            divisions: ((kMaxMouseWheelSensitivity -
+                        kMinMouseWheelSensitivity) /
+                    10)
+                .round(),
+            onChanged: (double v) => updateValue(v.round()),
+          ),
+        ),
+        Expanded(
+            flex: 1,
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 56,
+                  child: TextField(
+                    controller: _controller,
+                    keyboardType: TextInputType.number,
+                    textAlign: TextAlign.center,
+                    onSubmitted: (text) {
+                      int? v = int.tryParse(text);
+                      if (v != null) {
+                        updateValue(v);
+                      }
+                    },
+                    style: const TextStyle(fontSize: 13),
+                    decoration: InputDecoration(
+                      contentPadding:
+                          EdgeInsets.symmetric(vertical: 8.0, horizontal: 12.0),
+                    ),
+                  ),
+                ).marginOnly(right: 8.0),
+                Text(
+                  '%',
+                  style: const TextStyle(fontSize: 15),
+                )
+              ],
+            )),
+      ],
+    );
+  }
+}

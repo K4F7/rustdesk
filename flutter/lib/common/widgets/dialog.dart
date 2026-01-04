@@ -1927,6 +1927,32 @@ trackpadSpeedDialog(SessionID sessionId, FFI ffi) async {
       [btnClose]);
 }
 
+mouseWheelSensitivityDialog({VoidCallback? onChanged}) async {
+  final initSensitivity = int.tryParse(
+          bind.mainGetUserDefaultOption(key: kKeyMouseWheelSensitivity)) ??
+      kDefaultMouseWheelSensitivity;
+  final curSensitivity = SimpleWrapper(initSensitivity);
+  final btnClose = dialogButton('Close', onPressed: () async {
+    if (curSensitivity.value <= kMaxMouseWheelSensitivity &&
+        curSensitivity.value >= kMinMouseWheelSensitivity &&
+        curSensitivity.value != initSensitivity) {
+      await bind.mainSetUserDefaultOption(
+          key: kKeyMouseWheelSensitivity,
+          value: curSensitivity.value.toString());
+      await gFFI.inputModel.updateMouseWheelSensitivity();
+      onChanged?.call();
+    }
+    gFFI.dialogManager.dismissAll();
+  });
+  msgBoxCommon(
+      gFFI.dialogManager,
+      'Mouse wheel sensitivity',
+      MouseWheelSensitivityWidget(
+        value: curSensitivity,
+      ),
+      [btnClose]);
+}
+
 void deleteConfirmDialog(Function onSubmit, String title) async {
   gFFI.dialogManager.show(
     (setState, close, context) {

@@ -35,6 +35,7 @@ class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
   GestureDragStartCallback? onThreeFingerVerticalDragStart;
   GestureDragUpdateCallback? onThreeFingerVerticalDragUpdate;
   GestureDragEndCallback? onThreeFingerVerticalDragEnd;
+  bool Function(Offset position)? shouldAcceptPointer;
 
   var _currentState = GestureState.none;
   Timer? _debounceTimer;
@@ -117,6 +118,15 @@ class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
         _currentState = GestureState.none;
       });
     };
+  }
+
+  @override
+  bool isPointerAllowed(PointerDownEvent event) {
+    if (shouldAcceptPointer != null &&
+        !shouldAcceptPointer!(event.localPosition)) {
+      return false;
+    }
+    return super.isPointerAllowed(event);
   }
 
   // FIXME: This debounce logic is not working properly.

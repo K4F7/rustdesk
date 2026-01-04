@@ -16,6 +16,7 @@ import '../../models/model.dart';
 import '../../models/platform_model.dart';
 import '../common.dart';
 import '../consts.dart';
+import 'wheel_sensitivity.dart';
 
 /// Mouse button enum.
 enum MouseButtons { left, right, wheel, back }
@@ -348,6 +349,7 @@ class InputModel {
   int _trackpadSpeed = kDefaultTrackpadSpeed;
   double _trackpadSpeedInner = kDefaultTrackpadSpeed / 100.0;
   var _trackpadScrollUnsent = Offset.zero;
+  final WheelSensitivityFilter _wheelSensitivity = WheelSensitivityFilter();
 
   var _lastScale = 1.0;
 
@@ -408,6 +410,26 @@ class InputModel {
       _trackpadSpeed = kDefaultTrackpadSpeed;
     }
     _trackpadSpeedInner = _trackpadSpeed / 100.0;
+  }
+
+  int get mouseWheelSensitivity => _wheelSensitivity.value;
+
+  Future<void> updateMouseWheelSensitivity() async {
+    final raw =
+        int.tryParse(bind.mainGetUserDefaultOption(key: kKeyMouseWheelSensitivity)) ??
+            kDefaultMouseWheelSensitivity;
+    _wheelSensitivity.setValue(raw);
+  }
+
+  Offset _applyWheelSensitivity(Offset delta, {double divisor = 1.0}) {
+    return _wheelSensitivity.apply(delta, divisor: divisor);
+  }
+
+  Future<void> _sendWheel(int dx, int dy) async {
+    await bind.sessionSendMouse(
+        sessionId: sessionId,
+        msg: json.encode(
+            modify({'id': id, 'type': 'wheel', 'x': '$dx', 'y': '$dy'})));
   }
 
   void handleKeyDownEventModifiers(KeyEvent e) {
@@ -820,10 +842,9 @@ class InputModel {
   /// Send scroll event with scroll distance [y].
   Future<void> scroll(int y) async {
     if (isViewCamera) return;
-    await bind.sessionSendMouse(
-        sessionId: sessionId,
-        msg: json
-            .encode(modify({'id': id, 'type': 'wheel', 'y': y.toString()})));
+    final adjusted = _applyWheelSensitivity(Offset(0, y.toDouble()));
+    if (adjusted.dx == 0 && adjusted.dy == 0) return;
+    await _sendWheel(adjusted.dx.toInt(), adjusted.dy.toInt());
   }
 
   /// Reset key modifiers to false, including [shift], [ctrl], [alt] and [command].
@@ -949,7 +970,8 @@ class InputModel {
         if (isViewCamera) return;
         bind.sessionSendMouse(
             sessionId: sessionId,
-            msg: '{"type": "trackpad", "x": "$x", "y": "$y"}');
+            msg: json
+                .encode(modify({'type': 'trackpad', 'x': '$x', 'y': '$y'})));
       }
     }
   }
@@ -988,7 +1010,8 @@ class InputModel {
 
       bind.sessionSendMouse(
           sessionId: sessionId,
-          msg: '{"type": "trackpad", "x": "$dx", "y": "$dy"}');
+          msg: json
+              .encode(modify({'type': 'trackpad', 'x': '$dx', 'y': '$dy'})));
       _scheduleFling(x, y, delay);
     });
   }
@@ -1102,21 +1125,11 @@ class InputModel {
     if (isViewOnly) return;
     if (isViewCamera) return;
     if (e is PointerScrollEvent) {
-      var dx = e.scrollDelta.dx.toInt();
-      var dy = e.scrollDelta.dy.toInt();
-      if (dx > 0) {
-        dx = -1;
-      } else if (dx < 0) {
-        dx = 1;
-      }
-      if (dy > 0) {
-        dy = -1;
-      } else if (dy < 0) {
-        dy = 1;
-      }
-      bind.sessionSendMouse(
-          sessionId: sessionId,
-          msg: '{"type": "wheel", "x": "$dx", "y": "$dy"}');
+      final delta = _applyWheelSensitivity(
+          Offset(-e.scrollDelta.dx, -e.scrollDelta.dy),
+          divisor: kMouseWheelScrollUnit);
+      if (delta.dx == 0 && delta.dy == 0) return;
+      _sendWheel(delta.dx.toInt(), delta.dy.toInt());
     }
   }
 

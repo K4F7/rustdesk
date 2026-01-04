@@ -1110,6 +1110,9 @@ class __DisplayPageState extends State<_DisplayPage> {
     final Map codecsJson = jsonDecode(bind.mainSupportedHwdecodings());
     final h264 = codecsJson['h264'] ?? false;
     final h265 = codecsJson['h265'] ?? false;
+    final wheelSensitivity = int.tryParse(
+            bind.mainGetUserDefaultOption(key: kKeyMouseWheelSensitivity)) ??
+        kDefaultMouseWheelSensitivity;
     var codecList = [
       _RadioEntry('Auto', 'auto'),
       _RadioEntry('VP8', 'vp8'),
@@ -1182,6 +1185,20 @@ class __DisplayPageState extends State<_DisplayPage> {
                       await bind.mainSetUserDefaultOption(
                           key: kOptionCodecPreference, value: value);
                     },
+            ),
+          ],
+        ),
+        SettingsSection(
+          title: Text(translate('Input')),
+          tiles: [
+            SettingsTile(
+              title: Text(translate('Mouse wheel sensitivity')),
+              value: Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Text('$wheelSensitivity%'),
+              ),
+              onPressed: (_) =>
+                  mouseWheelSensitivityDialog(onChanged: () => setState(() {})),
             ),
           ],
         ),

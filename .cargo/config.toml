@@ -6,6 +6,13 @@ rustflags = ["-C", "target-feature=+crt-static", "-C", "link-args=/NODEFAULTLIB:
 rustflags = [
     "-C", "link-args=-sectcreate __CGPreLoginApp __cgpreloginapp /dev/null",
 ]
+[target.'cfg(target_os="android")']
+# Align program segments to 16 KB pages so Android devices with 16 KB page sizes
+# can load the Rust shared libraries without the compatibility shim.
+rustflags = [
+    "-C", "link-arg=-Wl,-z,max-page-size=16384",
+    "-C", "link-arg=-Wl,-z,common-page-size=16384",
+]
 #[target.'cfg(target_os="linux")']
 # glibc-static required, this may fix https://github.com/rustdesk/rustdesk/issues/9103, but I do not want this big change
 # this is unlikely to help also, because the other so files still use libc dynamically

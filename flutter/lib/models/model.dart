@@ -3603,6 +3603,7 @@ class FFI {
     if (isDesktop) {
       inputModel.updateTrackpadSpeed();
     }
+    inputModel.updateMouseWheelSensitivity();
 
     // CAUTION: `sessionStart()` and `sessionStartWithDisplays()` are an async functions.
     // Though the stream is returned immediately, the stream may not be ready.

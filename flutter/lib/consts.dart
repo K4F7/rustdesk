@@ -191,6 +191,11 @@ const String kOptionDisableFloatingWindow = "disable-floating-window";
 const String kOptionKeepScreenOn = "keep-screen-on";
 
 const String kOptionShowMobileAction = "showMobileActions";
+const String kOptionMobileShortcutConfig = "mobile-shortcut-config";
+const String kOptionMobileShortcutTogglePosition =
+    "mobile-shortcut-toggle-position";
+const String kOptionMobileKeyboardTogglePosition =
+    "mobile-keyboard-toggle-position";
 
 const String kUrlActionClose = "close";
 
@@ -253,6 +258,12 @@ const String kKeyTrackpadSpeed = 'trackpad-speed';
 const int kMinTrackpadSpeed = 10;
 const int kDefaultTrackpadSpeed = 100;
 const int kMaxTrackpadSpeed = 1000;
+// mouse wheel sensitivity
+const String kKeyMouseWheelSensitivity = 'mouse-wheel-sensitivity';
+const int kMinMouseWheelSensitivity = 10;
+const int kDefaultMouseWheelSensitivity = 100;
+const int kMaxMouseWheelSensitivity = 500;
+const double kMouseWheelScrollUnit = 120.0;
 
 // incomming (should be incoming) is kept, because change it will break the previous setting.
 const String kKeyPrinterIncomingJobAction = 'printer-incomming-job-action';
