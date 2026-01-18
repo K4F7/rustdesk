@@ -93,6 +93,10 @@ class _RawTouchGestureDetectorRegionState
   int _cacheLongPressPositionTs = 0;
   double _mouseScrollIntegral = 0; // mouse scroll speed controller
   double _scale = 1;
+  bool _twoFingerWheelActive = false;
+  Offset _twoFingerWheelLockedPos = Offset.zero;
+  Offset _twoFingerWheelLastFocal = Offset.zero;
+  double _twoFingerWheelIntegral = 0.0;
 
   bool _leftDragActive = false;
   bool _leftDragMoved = false;
@@ -552,7 +556,47 @@ class _RawTouchGestureDetectorRegionState
   }
 
   // scale + pan event
-  onTwoFingerScaleStart(ScaleStartDetails d) {
+  double _getAndroidTwoFingerWheelSensitivity() {
+    final raw =
+        bind.mainGetLocalOption(key: kAndroidTwoFingerScrollSensitivity);
+    final parsed = double.tryParse(raw);
+    final v = parsed ?? 1.0;
+    if (v.isNaN || v.isInfinite) return 1.0;
+    return v.clamp(0.5, 3.0);
+  }
+
+  void _twoFingerWheelScrollByDelta(double deltaDy) {
+    final sensitivity = _getAndroidTwoFingerWheelSensitivity();
+    _twoFingerWheelIntegral += (-deltaDy) / 4 * sensitivity;
+    while (_twoFingerWheelIntegral >= 1) {
+      inputModel.scroll(1);
+      _twoFingerWheelIntegral -= 1;
+      RemoteInputEventLog.add(
+        'wheel_v',
+        data: {
+          'x': _twoFingerWheelLockedPos.dx.round(),
+          'y': _twoFingerWheelLockedPos.dy.round(),
+          'dir': 'down',
+          'step': 1,
+        },
+      );
+    }
+    while (_twoFingerWheelIntegral <= -1) {
+      inputModel.scroll(-1);
+      _twoFingerWheelIntegral += 1;
+      RemoteInputEventLog.add(
+        'wheel_v',
+        data: {
+          'x': _twoFingerWheelLockedPos.dx.round(),
+          'y': _twoFingerWheelLockedPos.dy.round(),
+          'dir': 'up',
+          'step': -1,
+        },
+      );
+    }
+  }
+
+  onTwoFingerScaleStart(ScaleStartDetails d) async {
     _lastTapDownDetails = null;
     if (isNotTouchBasedDevice()) {
       return;
@@ -560,6 +604,23 @@ class _RawTouchGestureDetectorRegionState
     if (isSpecialHoldDragActive) {
       // Initialize the last focal point to calculate deltas manually.
       _lastSpecialHoldDragFocalPoint = d.focalPoint;
+      return;
+    }
+
+    // Android remote session: replace pinch-to-zoom with two-finger wheel.
+    if (isAndroid && handleTouch && !widget.isCamera) {
+      _twoFingerWheelActive = true;
+      _twoFingerWheelIntegral = 0.0;
+      _twoFingerWheelLockedPos = d.localFocalPoint;
+      _twoFingerWheelLastFocal = d.localFocalPoint;
+      if (!ffi.cursorModel.isInRemoteRect(_twoFingerWheelLockedPos) ||
+          ffi.cursorModel.shouldBlock(
+              _twoFingerWheelLockedPos.dx, _twoFingerWheelLockedPos.dy)) {
+        _twoFingerWheelActive = false;
+        return;
+      }
+      await ffi.cursorModel
+          .move(_twoFingerWheelLockedPos.dx, _twoFingerWheelLockedPos.dy);
     }
   }
 
@@ -568,9 +629,16 @@ class _RawTouchGestureDetectorRegionState
       return;
     }
 
+    // Android remote session: two-finger wheel (no scale/pan).
+    if (isAndroid && handleTouch && _twoFingerWheelActive && !widget.isCamera) {
+      final delta = d.localFocalPoint - _twoFingerWheelLastFocal;
+      _twoFingerWheelLastFocal = d.localFocalPoint;
+      _twoFingerWheelScrollByDelta(delta.dy);
+      return;
+    }
     // Android: pinch-to-zoom is removed for the remote session (Milestone 1).
     // Two-finger gestures should not scale/pan the canvas.
-    if (isAndroid && !isSpecialHoldDragActive) {
+    if (isAndroid && !widget.isCamera && !isSpecialHoldDragActive) {
       return;
     }
 
@@ -608,7 +676,9 @@ class _RawTouchGestureDetectorRegionState
     if (isNotTouchBasedDevice()) {
       return;
     }
-    if (isAndroid && !isSpecialHoldDragActive) {
+    if (isAndroid && !widget.isCamera && !isSpecialHoldDragActive) {
+      _twoFingerWheelActive = false;
+      _twoFingerWheelIntegral = 0.0;
       _scale = 1;
       return;
     }

@@ -27,6 +27,7 @@ import '../../utils/image.dart';
 import '../widgets/dialog.dart';
 import '../widgets/custom_scale_widget.dart';
 import '../widgets/remote_input_log_overlay.dart';
+import '../widgets/remote_wheel_slider.dart';
 
 final initText = '1' * 1024;
 
@@ -628,6 +629,13 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
             paints.add(FloatingMouse(
               ffi: gFFI,
             ));
+            if (isAndroid) {
+              paints.add(RemoteWheelSlider(
+                inputModel: gFFI.inputModel,
+                cursorModel: gFFI.cursorModel,
+                position: draggablePositions.remoteWheelSlider,
+              ));
+            }
           } else {
             paints.add(FloatingMouseWidgets(
               ffi: gFFI,

@@ -198,6 +198,11 @@ const String kOptionKeepScreenOn = "keep-screen-on";
 
 const String kOptionShowMobileAction = "showMobileActions";
 
+// Android remote-session touch enhancements
+// Stored via `bind.mainGetLocalOption` / `bind.mainSetLocalOption`.
+const String kAndroidTwoFingerScrollSensitivity =
+    "android-two-finger-scroll-sensitivity";
+
 const String kUrlActionClose = "close";
 
 const String kTabLabelHomePage = "Home";
