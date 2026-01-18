@@ -27,6 +27,8 @@ import '../../utils/image.dart';
 import '../widgets/dialog.dart';
 import '../widgets/custom_scale_widget.dart';
 import '../widgets/remote_input_log_overlay.dart';
+import '../widgets/remote_shortcuts_panel.dart';
+import '../widgets/remote_tool_dock.dart';
 import '../widgets/remote_wheel_slider.dart';
 
 final initText = '1' * 1024;
@@ -79,6 +81,9 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   final FocusNode _mobileFocusNode = FocusNode();
   final FocusNode _physicalFocusNode = FocusNode();
   var _showEdit = false; // use soft keyboard
+  bool _shortcutsVisible = false;
+  List<RemoteShortcut> _shortcuts = <RemoteShortcut>[];
+  final Set<String> _heldShortcutIds = <String>{};
 
   InputModel get inputModel => gFFI.inputModel;
   SessionID get sessionId => gFFI.sessionId;
@@ -95,6 +100,11 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    if (isAndroid) {
+      _shortcutsVisible =
+          mainGetLocalBoolOptionSync(kAndroidRemoteShortcutsVisible);
+      _shortcuts = RemoteShortcutsStore.load();
+    }
     gFFI.ffiModel.updateEventListener(sessionId, widget.id);
     gFFI.start(
       widget.id,
@@ -354,6 +364,224 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     });
   }
 
+  void _closeKeyboard() {
+    setState(() => _showEdit = false);
+    gFFI.invokeMethod("enable_soft_keyboard", false);
+    _mobileFocusNode.unfocus();
+    _physicalFocusNode.requestFocus();
+  }
+
+  void _toggleKeyboardFromDock() {
+    final visible = keyboardVisibilityController.isVisible && _showEdit;
+    if (visible) {
+      _closeKeyboard();
+    } else {
+      openKeyboard();
+    }
+  }
+
+  Future<void> _toggleShortcutsVisible() async {
+    final next = !_shortcutsVisible;
+    setState(() => _shortcutsVisible = next);
+    await mainSetLocalBoolOption(kAndroidRemoteShortcutsVisible, next);
+  }
+
+  Future<void> _addShortcutFromDock() async {
+    if (!mounted) return;
+
+    final pi = gFFI.ffiModel.pi;
+    final isMacPeer = pi.platform == kPeerPlatformMacOS;
+
+    String name = '';
+    bool ctrl = true;
+    bool shift = false;
+    bool alt = false;
+    bool win = false;
+    String mainKey = 'VK_C';
+
+    const mainKeyOptions = <String>[
+      'VK_A',
+      'VK_B',
+      'VK_C',
+      'VK_D',
+      'VK_E',
+      'VK_F',
+      'VK_G',
+      'VK_H',
+      'VK_I',
+      'VK_J',
+      'VK_K',
+      'VK_L',
+      'VK_M',
+      'VK_N',
+      'VK_O',
+      'VK_P',
+      'VK_Q',
+      'VK_R',
+      'VK_S',
+      'VK_T',
+      'VK_U',
+      'VK_V',
+      'VK_W',
+      'VK_X',
+      'VK_Y',
+      'VK_Z',
+      'VK_F1',
+      'VK_F2',
+      'VK_F3',
+      'VK_F4',
+      'VK_F5',
+      'VK_F6',
+      'VK_F7',
+      'VK_F8',
+      'VK_F9',
+      'VK_F10',
+      'VK_F11',
+      'VK_F12',
+      'VK_ESCAPE',
+      'VK_TAB',
+      'VK_HOME',
+      'VK_END',
+      'VK_INSERT',
+      'VK_DELETE',
+      'VK_PRIOR',
+      'VK_NEXT',
+      'VK_LEFT',
+      'VK_UP',
+      'VK_DOWN',
+      'VK_RIGHT',
+      'VK_RETURN',
+      'VK_SPACE',
+      'VK_BACK',
+    ];
+
+    List<String> toKeys() {
+      final keys = <String>[];
+      if (ctrl) keys.add('VK_CONTROL');
+      if (shift) keys.add('VK_SHIFT');
+      if (alt) keys.add('VK_MENU');
+      if (win) keys.add('VK_LWIN');
+      keys.add(mainKey);
+      return keys;
+    }
+
+    final ok = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => StatefulBuilder(builder: (ctx, setLocal) {
+            return AlertDialog(
+              title: Text(translate('Add shortcut')),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Semantics(
+                    label: 'u2_remote_add_shortcut_name',
+                    textField: true,
+                    child: TextField(
+                      decoration: InputDecoration(
+                          labelText: translate('Name (optional)')),
+                      onChanged: (v) => setLocal(() => name = v),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      Semantics(
+                        label: 'u2_remote_add_shortcut_ctrl',
+                        child: FilterChip(
+                          selected: ctrl,
+                          label: const Text('Ctrl'),
+                          onSelected: (v) => setLocal(() => ctrl = v),
+                        ),
+                      ),
+                      Semantics(
+                        label: 'u2_remote_add_shortcut_shift',
+                        child: FilterChip(
+                          selected: shift,
+                          label: const Text('Shift'),
+                          onSelected: (v) => setLocal(() => shift = v),
+                        ),
+                      ),
+                      Semantics(
+                        label: 'u2_remote_add_shortcut_alt',
+                        child: FilterChip(
+                          selected: alt,
+                          label: const Text('Alt'),
+                          onSelected: (v) => setLocal(() => alt = v),
+                        ),
+                      ),
+                      Semantics(
+                        label: 'u2_remote_add_shortcut_win',
+                        child: FilterChip(
+                          selected: win,
+                          label: Text(isMacPeer ? 'Cmd' : 'Win'),
+                          onSelected: (v) => setLocal(() => win = v),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Semantics(
+                          label: 'u2_remote_add_shortcut_key',
+                          child: DropdownButtonFormField<String>(
+                            value: mainKey,
+                            items: [
+                              for (final k in mainKeyOptions)
+                                DropdownMenuItem(
+                                  value: k,
+                                  child: Text(
+                                    formatShortcutKeys([k],
+                                        isMacPeer: isMacPeer),
+                                  ),
+                                ),
+                            ],
+                            onChanged: (v) =>
+                                setLocal(() => mainKey = v ?? mainKey),
+                            decoration:
+                                InputDecoration(labelText: translate('Key')),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    formatShortcutKeys(toKeys(), isMacPeer: isMacPeer),
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: Text(translate('Cancel')),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: Text(translate('OK')),
+                ),
+              ],
+            );
+          }),
+        ) ??
+        false;
+    if (!ok) return;
+
+    final keys = toKeys();
+    if (keys.isEmpty) return;
+    final shortcut = RemoteShortcut(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      name: name.trim(),
+      keys: keys,
+    );
+    setState(() => _shortcuts = [..._shortcuts, shortcut]);
+    await RemoteShortcutsStore.save(_shortcuts);
+  }
+
   Widget _bottomWidget() => _showGestureHelp
       ? getGestureHelp()
       : (_showBar && gFFI.ffiModel.pi.displays.isNotEmpty
@@ -378,29 +606,28 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
               : null,
           floatingActionButton: !showActionButton
               ? null
-              : FloatingActionButton(
-                  mini: !keyboardIsVisible,
-                  child: Icon(
-                    (keyboardIsVisible || _showGestureHelp)
-                        ? Icons.expand_more
-                        : Icons.expand_less,
-                    color: Colors.white,
-                  ),
-                  backgroundColor: MyTheme.accent,
-                  onPressed: () {
-                    setState(() {
-                      if (keyboardIsVisible) {
-                        _showEdit = false;
-                        gFFI.invokeMethod("enable_soft_keyboard", false);
-                        _mobileFocusNode.unfocus();
-                        _physicalFocusNode.requestFocus();
-                      } else if (_showGestureHelp) {
-                        _showGestureHelp = false;
-                      } else {
-                        _showBar = !_showBar;
-                      }
-                    });
-                  }),
+              : (isAndroid
+                  ? null
+                  : FloatingActionButton(
+                      mini: !keyboardIsVisible,
+                      child: Icon(
+                        (keyboardIsVisible || _showGestureHelp)
+                            ? Icons.expand_more
+                            : Icons.expand_less,
+                        color: Colors.white,
+                      ),
+                      backgroundColor: MyTheme.accent,
+                      onPressed: () {
+                        setState(() {
+                          if (keyboardIsVisible) {
+                            _closeKeyboard();
+                          } else if (_showGestureHelp) {
+                            _showGestureHelp = false;
+                          } else {
+                            _showBar = !_showBar;
+                          }
+                        });
+                      })),
           bottomNavigationBar: Obx(() => Stack(
                 alignment: Alignment.bottomCenter,
                 children: [
@@ -577,12 +804,25 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
 
   Widget getBodyForMobile() {
     final keyboardIsVisible = keyboardVisibilityController.isVisible;
+    final dockKeyboardVisible = keyboardIsVisible && _showEdit;
+    final showToolDock = isAndroid && gFFI.ffiModel.pi.isSet.isTrue;
     return Container(
         color: MyTheme.canvasColor,
         child: Stack(children: () {
           final paints = [
             ImagePaint(ffiModel: gFFI.ffiModel),
             RemoteInputLogOverlay(cursorModel: gFFI.cursorModel),
+            if (isAndroid &&
+                mainGetLocalBoolOptionSync(kOptionEnableAndroidE2eMode))
+              Positioned(
+                left: 0,
+                top: 0,
+                child: Semantics(
+                  label: 'u2_remote_keyboard_state',
+                  value: dockKeyboardVisible ? 'visible' : 'hidden',
+                  child: const SizedBox(width: 1, height: 1),
+                ),
+              ),
             Positioned(
               top: 10,
               right: 10,
@@ -591,6 +831,50 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
             KeyHelpTools(
                 keyboardIsVisible: keyboardIsVisible,
                 showGestureHelp: _showGestureHelp),
+            if (showToolDock)
+              RemoteToolDock(
+                cursorModel: gFFI.cursorModel,
+                position: draggablePositions.remoteToolDock,
+                showArrowButton:
+                    !_showBar && !dockKeyboardVisible && !_showGestureHelp,
+                shortcutsVisible: _shortcutsVisible,
+                keyboardVisible: dockKeyboardVisible,
+                onToggleKeyboard: _toggleKeyboardFromDock,
+                onToggleShortcuts: _toggleShortcutsVisible,
+                onAddShortcut: _addShortcutFromDock,
+                onArrowPressed: () => setState(() => _showBar = true),
+              ),
+            if (showToolDock)
+              RemoteShortcutsPanel(
+                visible: _shortcutsVisible,
+                cursorModel: gFFI.cursorModel,
+                inputModel: gFFI.inputModel,
+                shortcuts: _shortcuts,
+                heldShortcutIds: _heldShortcutIds,
+                onDelete: (s) async {
+                  setState(() {
+                    _shortcuts = _shortcuts.where((e) => e.id != s.id).toList();
+                    _heldShortcutIds.remove(s.id);
+                  });
+                  await RemoteShortcutsStore.save(_shortcuts);
+                },
+                onToggleHold: (s) async {
+                  final held = _heldShortcutIds.contains(s.id);
+                  setState(() {
+                    if (held) {
+                      _heldShortcutIds.remove(s.id);
+                    } else {
+                      _heldShortcutIds.add(s.id);
+                    }
+                  });
+                  await setShortcutHold(
+                    gFFI.inputModel,
+                    s.keys,
+                    hold: !held,
+                    isMacPeer: gFFI.ffiModel.pi.platform == kPeerPlatformMacOS,
+                  );
+                },
+              ),
             SizedBox(
               width: 0,
               height: 0,
@@ -904,6 +1188,15 @@ class _KeyHelpToolsState extends State<KeyHelpTools> {
 
   @override
   Widget build(BuildContext context) {
+    final hideOnIme = isAndroid &&
+        widget.keyboardIsVisible &&
+        mainGetLocalBoolOptionSync(kAndroidHideKeyboardToolsOnIme);
+    if (hideOnIme) {
+      gFFI.cursorModel
+          .keyHelpToolsVisibilityChanged(null, widget.keyboardIsVisible);
+      return Offstage();
+    }
+
     final hasModifierOn = inputModel.ctrl ||
         inputModel.alt ||
         inputModel.shift ||
@@ -1050,7 +1343,10 @@ class _KeyHelpToolsState extends State<KeyHelpTools> {
     Future.delayed(Duration(milliseconds: 500), () {
       _updateRect();
     });
-    return Container(
+    return Semantics(
+      label: 'u2_remote_key_help_tools',
+      container: true,
+      child: Container(
         key: _key,
         color: Color(0xAA000000),
         padding: EdgeInsets.only(
@@ -1063,7 +1359,9 @@ class _KeyHelpToolsState extends State<KeyHelpTools> {
               keys +
               (_fn ? fn : []) +
               (_more ? more : []),
-        ));
+        ),
+      ),
+    );
   }
 }
 

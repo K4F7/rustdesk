@@ -72,6 +72,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
   var _enableStartOnBoot = false;
   var _checkUpdateOnStartup = false;
   var _androidE2eMode = false;
+  var _androidHideKeyboardToolsOnIme = false;
   var _showTerminalExtraKeys = false;
   var _floatingWindowDisabled = false;
   var _keepScreenOn = KeepScreenOn.duringControlled; // relay on floating window
@@ -191,6 +192,15 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
         if (androidE2eMode != _androidE2eMode) {
           update = true;
           _androidE2eMode = androidE2eMode;
+        }
+      }
+
+      if (isAndroid) {
+        final hideKeyboardToolsOnIme =
+            mainGetLocalBoolOptionSync(kAndroidHideKeyboardToolsOnIme);
+        if (hideKeyboardToolsOnIme != _androidHideKeyboardToolsOnIme) {
+          update = true;
+          _androidHideKeyboardToolsOnIme = hideKeyboardToolsOnIme;
         }
       }
 
@@ -643,6 +653,34 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
           onToggle: (bool toValue) async {
             await mainSetLocalBoolOption(kOptionEnableAndroidE2eMode, toValue);
             setState(() => _androidE2eMode = toValue);
+          },
+        ),
+      );
+    }
+
+    if (isAndroid) {
+      enhancementsTiles.add(
+        SettingsTile.switchTile(
+          initialValue: _androidHideKeyboardToolsOnIme,
+          title: Semantics(
+            label: 'u2_settings_hide_keyboard_tools_on_ime',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(translate('Hide keyboard toolbar when typing')),
+                Text(
+                  '* ${translate('Remote session only')}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+          onToggle: (bool toValue) async {
+            await mainSetLocalBoolOption(
+                kAndroidHideKeyboardToolsOnIme, toValue);
+            final newValue =
+                mainGetLocalBoolOptionSync(kAndroidHideKeyboardToolsOnIme);
+            setState(() => _androidHideKeyboardToolsOnIme = newValue);
           },
         ),
       );

@@ -67,6 +67,8 @@ String formatShortcutKeys(List<String> keys, {required bool isMacPeer}) {
         return 'Shift';
       case 'VK_MENU':
         return 'Alt';
+      case 'VK_LWIN':
+      case 'VK_RWIN':
       case 'Meta':
       case 'RWin':
         return isMacPeer ? 'Cmd' : 'Win';
@@ -168,9 +170,9 @@ class _RemoteShortcutsPanelState extends State<RemoteShortcutsPanel> {
 
   void _syncBlockedRect(Size screenSize) {
     final enabled = widget.visible;
-    final left = (screenSize.width - _right - _width).clamp(0.0, screenSize.width);
-    final newRect =
-        enabled ? Rect.fromLTWH(left, _top, _width, _height) : null;
+    final left =
+        (screenSize.width - _right - _width).clamp(0.0, screenSize.width);
+    final newRect = enabled ? Rect.fromLTWH(left, _top, _width, _height) : null;
 
     if (_blockedRect != null) {
       widget.cursorModel.removeBlockedRect(_blockedRect!);
@@ -292,8 +294,7 @@ class _RemoteShortcutsPanelState extends State<RemoteShortcutsPanel> {
                               ),
                             ),
                             alignment: Alignment.center,
-                            padding:
-                                const EdgeInsets.symmetric(horizontal: 10),
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
                             child: Text(
                               label,
                               maxLines: 1,
@@ -325,4 +326,3 @@ class _RemoteShortcutsPanelState extends State<RemoteShortcutsPanel> {
     );
   }
 }
-
