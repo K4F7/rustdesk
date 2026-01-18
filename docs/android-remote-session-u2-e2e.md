@@ -20,3 +20,7 @@
 
 `1700000000000 left_click {"x":120,"y":300}`
 
+## Milestone 2（S2/S3/S4）验收脚本
+
+- UIAutomator2 脚本：`tools/android_uiautomator2/src/u2runner/story234_gesture_state_machine.py`
+- 依赖前置：需在 **Debug** 构建打开 `Settings -> Android E2E Mode`，并手动进入远控会话页后再运行脚本（脚本不负责建立远控连接）。
