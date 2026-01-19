@@ -109,14 +109,22 @@ def _assert_no_update_banner(d) -> None:
 
 def _assert_update_setting_disabled(console: Console, d) -> None:
     # Settings 页中：通过 Semantics(label) 定位，避免语言/布局差异
-    target = d(descriptionContains="u2_settings_check_update_on_startup") | d(textContains="u2_settings_check_update_on_startup")
+    # uiautomator2 新版本的 UiObject 不支持用 `|` 做 selector union；
+    # 这里用“先 description 再 text”的方式实现 OR。
+    def _find_target():
+        obj = d(descriptionContains="u2_settings_check_update_on_startup")
+        if obj.exists:
+            return obj
+        return d(textContains="u2_settings_check_update_on_startup")
 
     for _ in range(8):
+        target = _find_target()
         if target.exists:
             break
         d.swipe_ext("up", scale=0.6)
         time.sleep(0.5)
 
+    target = _find_target()
     if not target.exists:
         # 再兜底：直接在层级 XML 中查找标识
         try:

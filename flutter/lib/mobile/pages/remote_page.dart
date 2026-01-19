@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common/shared_state.dart';
@@ -806,6 +807,20 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     final keyboardIsVisible = keyboardVisibilityController.isVisible;
     final dockKeyboardVisible = keyboardIsVisible && _showEdit;
     final showToolDock = isAndroid && gFFI.ffiModel.pi.isSet.isTrue;
+    final e2eEnabled = isAndroid &&
+        kDebugMode &&
+        mainGetLocalBoolOptionSync(kOptionEnableAndroidE2eMode);
+    if (e2eEnabled &&
+        !gFFI.ffiModel.touchMode &&
+        !gFFI.ffiModel.isPeerAndroid) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (!gFFI.ffiModel.touchMode) {
+          gFFI.ffiModel.toggleTouchMode();
+          bind.mainSetLocalOption(key: kOptionTouchMode, value: 'Y');
+        }
+      });
+    }
     return Container(
         color: MyTheme.canvasColor,
         child: Stack(children: () {
@@ -923,6 +938,18 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
           } else {
             paints.add(FloatingMouseWidgets(
               ffi: gFFI,
+            ));
+          }
+          if (_showGestureHelp) {
+            paints.add(ModalBarrier(
+              color: Theme.of(context).brightness == Brightness.light
+                  ? Colors.black12
+                  : Colors.black45,
+              dismissible: true,
+              onDismiss: () {
+                if (!mounted) return;
+                setState(() => _showGestureHelp = false);
+              },
             ));
           }
           return paints;

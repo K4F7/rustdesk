@@ -39,12 +39,38 @@ def _adb() -> str:
         return adbutils_adb
     return "adb"
 
+
 def _trim_one_line(text: str, max_len: int = 200) -> str:
     s = (text or "").strip().replace("\r", "")
     s = " ".join(s.splitlines()).strip()
     if len(s) > max_len:
         return s[: max_len - 1] + "…"
     return s
+
+
+_U2E2E_PREFIX = "U2E2E "
+
+
+def _adb_logcat_clear(serial: str, *, timeout_s: int) -> None:
+    _run([_adb(), "-s", serial, "logcat", "-c"], timeout_s=timeout_s)
+
+
+def _adb_logcat_dump_u2e2e_lines(serial: str, *, timeout_s: int) -> list[str]:
+    result = _run([_adb(), "-s", serial, "logcat", "-d", "-v", "raw"], timeout_s=timeout_s)
+    if result.returncode not in (0, 124):
+        # 某些设备会返回非 0，但仍能拿到 stdout；这里尽量兼容。
+        pass
+
+    out: list[str] = []
+    for raw in (result.stdout or "").splitlines():
+        line = raw.strip().replace("\r", "")
+        if not line:
+            continue
+        idx = line.find(_U2E2E_PREFIX)
+        if idx < 0:
+            continue
+        out.append(line[idx + len(_U2E2E_PREFIX) :].strip())
+    return out
 
 
 def _describe_adb_env() -> str:
@@ -78,9 +104,16 @@ def _wait_for_device(
         state = result.stdout.strip()
         last_line = f"returncode={result.returncode}, state={_trim_one_line(state)}"
         if result.returncode == 0 and state == "device":
-            if verbose:
-                console.print(f"[green]设备已上线[/green]（{serial}）")
-            return
+            # get-state 偶尔会出现“看似 device，但 shell 实际不可用/卡住”的情况；
+            # 这里再做一次最轻量的 shell 探测，避免后续步骤长时间卡在 getprop。
+            probe_cmd = [_adb(), "-s", serial, "shell", "true"]
+            probe = _run(probe_cmd, timeout_s=cmd_timeout_s)
+            probe_out = _trim_one_line(probe.stdout)
+            if probe.returncode == 0:
+                if verbose:
+                    console.print(f"[green]设备已上线[/green]（{serial}）")
+                return
+            last_line = f"returncode={probe.returncode}, shell_probe={probe_out or '(空)'}"
         now = time.time()
         if verbose and (now - last_print) >= 1.0:
             left = max(0, int(deadline - now))

@@ -33,6 +33,7 @@ class _RemoteWheelSliderState extends State<RemoteWheelSlider> {
   double _scrollIntegral = 0.0;
   Offset? _lastDoubleTapDownLocal;
   Rect? _blockedRect;
+  bool _thumbMoveLogged = false;
 
   double _getSensitivity() {
     final raw =
@@ -127,7 +128,6 @@ class _RemoteWheelSliderState extends State<RemoteWheelSlider> {
       child: Semantics(
         label: 'u2_remote_wheel_slider',
         container: true,
-        excludeSemantics: true,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onDoubleTapDown: (d) => _lastDoubleTapDownLocal = d.localPosition,
@@ -155,9 +155,44 @@ class _RemoteWheelSliderState extends State<RemoteWheelSlider> {
               );
             });
             _scrollByDelta(details.delta.dy);
+
+            if (!_thumbMoveLogged && _thumbOffset.abs() > 4) {
+              _thumbMoveLogged = true;
+              RemoteInputEventLog.add(
+                'wheel_slider_thumb',
+                data: {
+                  'phase': 'move',
+                  'offset': _thumbOffset.round(),
+                },
+              );
+            }
           },
-          onPanEnd: (_) => setState(() => _thumbOffset = 0),
-          onPanCancel: () => setState(() => _thumbOffset = 0),
+          onPanStart: (_) {
+            if (_moveMode) return;
+            _thumbMoveLogged = false;
+          },
+          onPanEnd: (_) {
+            if (_moveMode) return;
+            setState(() => _thumbOffset = 0);
+            RemoteInputEventLog.add(
+              'wheel_slider_thumb',
+              data: {
+                'phase': 'reset',
+                'offset': 0,
+              },
+            );
+          },
+          onPanCancel: () {
+            if (_moveMode) return;
+            setState(() => _thumbOffset = 0);
+            RemoteInputEventLog.add(
+              'wheel_slider_thumb',
+              data: {
+                'phase': 'reset',
+                'offset': 0,
+              },
+            );
+          },
           child: Container(
             decoration: BoxDecoration(
               color: const Color(0xCC000000),
@@ -183,15 +218,19 @@ class _RemoteWheelSliderState extends State<RemoteWheelSlider> {
                       Alignment(0, _thumbOffset / (widget.height / 2 - 24)),
                   duration: const Duration(milliseconds: 260),
                   curve: Curves.elasticOut,
-                  child: Container(
-                    width: widget.width - 16,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: _moveMode
-                          ? Colors.white24
-                          : Colors.white.withOpacity(0.14),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.white24),
+                  child: Semantics(
+                    label: 'u2_remote_wheel_slider_thumb',
+                    container: true,
+                    child: Container(
+                      width: widget.width - 16,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: _moveMode
+                            ? Colors.white24
+                            : Colors.white.withOpacity(0.14),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.white24),
+                      ),
                     ),
                   ),
                 ),

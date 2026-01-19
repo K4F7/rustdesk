@@ -56,6 +56,8 @@ exec "${WIN_PS}" -NoProfile -Command "& {
       uv run python src\\u2runner\\smoketest.py @rest
     } elseif (\$cmd -eq 'u2-story10-disable-update') {
       uv run python src\\u2runner\\story10_disable_update.py @rest
+    } elseif (\$cmd -eq 'u2-story12345612') {
+      uv run python src\\u2runner\\suite_story12345612.py @rest
     } else {
       uv run \$cmd @rest
     }

@@ -12,6 +12,8 @@ from rich.console import Console
 try:
     from .connect import (
         _adb,
+        _adb_logcat_clear,
+        _adb_logcat_dump_u2e2e_lines,
         _describe_adb_env,
         _run,
         _trim_one_line,
@@ -26,6 +28,8 @@ except ImportError:  # 支持 `python src/u2runner/story234_gesture_state_machin
         sys.path.insert(0, str(_SRC))
     from u2runner.connect import (  # type: ignore[no-redef]
         _adb,
+        _adb_logcat_clear,
+        _adb_logcat_dump_u2e2e_lines,
         _describe_adb_env,
         _run,
         _trim_one_line,
@@ -36,17 +40,9 @@ except ImportError:  # 支持 `python src/u2runner/story234_gesture_state_machin
 
 _PKG = "com.carriez.flutter_hbb"
 
-_SEL_OVERLAY = {"description": "u2_remote_input_log_overlay"}
-_SEL_TEXT = {"description": "u2_remote_input_log_text"}
-_SEL_CLEAR = {"description": "u2_remote_input_log_clear"}
 
-
-def _get_log_lines(d) -> list[str]:
-    obj = d(**_SEL_TEXT)
-    if not obj.exists:
-        return []
-    text = (obj.get_text() or "").strip()
-    return [ln.strip() for ln in text.splitlines() if ln.strip()]
+def _get_log_lines(serial: str, *, adb_timeout_s: int) -> list[str]:
+    return _adb_logcat_dump_u2e2e_lines(serial, timeout_s=adb_timeout_s)
 
 
 def _find_events(lines: list[str], event_type: str) -> list[tuple[int, str, dict]]:
@@ -90,6 +86,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-v", "--verbose", action="count", default=0, help="输出更详细的过程（可重复 -vv）")
     parser.add_argument("--poll-interval", type=float, default=1.0, help="轮询间隔秒数（默认 1.0）")
     parser.add_argument("--adb-timeout", type=int, default=10, help="单次 adb 命令超时秒数（默认 10）")
+    parser.add_argument("--overlay-wait", type=float, default=15.0, help="等待日志刷入秒数（默认 15）")
     parser.add_argument(
         "--launch",
         action="store_true",
@@ -139,15 +136,9 @@ def main(argv: list[str] | None = None) -> int:
         d.app_start(_PKG)
         time.sleep(args.launch_wait)
 
-    console.print("5) 等待输入日志面板出现（需 Android + Debug + E2E Mode + 远控会话页）…")
-    if not d(**_SEL_OVERLAY).wait(timeout=15.0):
-        raise SystemExit(
-            "未找到输入日志面板：请确认已在 Debug 构建打开 Settings -> Android E2E Mode，并进入远控会话页。"
-        )
-
-    if d(**_SEL_CLEAR).exists:
-        d(**_SEL_CLEAR).click()
-        time.sleep(0.3)
+    console.print("5) 清空 logcat（只抓取本次事件）…")
+    _adb_logcat_clear(args.serial, timeout_s=args.adb_timeout)
+    time.sleep(0.2)
 
     w, h = d.window_size()
     cx, cy = int(w * 0.5), int(h * 0.45)
@@ -156,23 +147,24 @@ def main(argv: list[str] | None = None) -> int:
     # 用 swipe 触发一段明确位移
     d.swipe(cx, cy, cx + int(w * 0.15), cy + int(h * 0.05), duration=0.12)
     time.sleep(0.5)
-    lines = _get_log_lines(d)
+    lines = _get_log_lines(args.serial, adb_timeout_s=args.adb_timeout)
     _assert_contains_drag_phases(lines, "left_drag")
 
-    if d(**_SEL_CLEAR).exists:
-        d(**_SEL_CLEAR).click()
-        time.sleep(0.3)
+    _adb_logcat_clear(args.serial, timeout_s=args.adb_timeout)
+    time.sleep(0.2)
 
     console.print("7) Story 2：右键长按（long press）…")
     d.long_click(cx, cy, duration=0.8)
     time.sleep(0.5)
-    lines = _get_log_lines(d)
+    lines = _get_log_lines(args.serial, adb_timeout_s=args.adb_timeout)
     if not _find_events(lines, "right_click"):
-        raise AssertionError(f"未找到 right_click 事件，当前日志: {lines[-12:]}")
+        raise AssertionError(
+            "未找到 right_click 事件：请确认已在 Debug 构建打开 Settings -> Android E2E Mode，并进入远控会话页。"
+            f" 当前日志: {lines[-12:]}"
+        )
 
-    if d(**_SEL_CLEAR).exists:
-        d(**_SEL_CLEAR).click()
-        time.sleep(0.3)
+    _adb_logcat_clear(args.serial, timeout_s=args.adb_timeout)
+    time.sleep(0.2)
 
     console.print("8) Story 4：右键拖动（long press -> move）…")
     # uiautomator2 touch 链式：按下 -> 等待长按判定 -> 移动 -> 抬起
@@ -184,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
     time.sleep(0.12)
     d.touch.up(cx + int(w * 0.18), cy + int(h * 0.05))
     time.sleep(0.6)
-    lines = _get_log_lines(d)
+    lines = _get_log_lines(args.serial, adb_timeout_s=args.adb_timeout)
     _assert_contains_drag_phases(lines, "right_drag")
 
     console.print("[green]OK[/green]：Story 2/3/4 手势日志断言通过（如远端行为异常，请重点回归阈值与互斥逻辑）")
@@ -193,4 +185,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
