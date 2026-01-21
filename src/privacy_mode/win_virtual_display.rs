@@ -1,9 +1,11 @@
-use super::{PrivacyMode, PrivacyModeState, INVALID_PRIVACY_MODE_CONN_ID, NO_DISPLAYS};
-use crate::virtual_display_manager;
+use super::{PrivacyMode, PrivacyModeState, INVALID_PRIVACY_MODE_CONN_ID, NO_PHYSICAL_DISPLAYS};
+use crate::{platform::windows::reg_display_settings, virtual_display_manager};
 use hbb_common::{allow_err, bail, config::Config, log, ResultType};
 use std::{
     io::Error,
     ops::{Deref, DerefMut},
+    thread,
+    time::Duration,
 };
 use virtual_display::MonitorMode;
 use winapi::{
@@ -19,15 +21,14 @@ use winapi::{
         winuser::{
             ChangeDisplaySettingsExW, EnumDisplayDevicesW, EnumDisplaySettingsExW,
             EnumDisplaySettingsW, CDS_NORESET, CDS_RESET, CDS_SET_PRIMARY, CDS_UPDATEREGISTRY,
-            DISP_CHANGE_SUCCESSFUL, EDD_GET_DEVICE_INTERFACE_NAME, ENUM_CURRENT_SETTINGS,
-            ENUM_REGISTRY_SETTINGS,
+            DISP_CHANGE_FAILED, DISP_CHANGE_SUCCESSFUL, EDD_GET_DEVICE_INTERFACE_NAME,
+            ENUM_CURRENT_SETTINGS, ENUM_REGISTRY_SETTINGS,
         },
     },
 };
 
-pub(super) const PRIVACY_MODE_IMPL: &str = "privacy_mode_impl_virtual_display";
+pub(super) const PRIVACY_MODE_IMPL: &str = super::PRIVACY_MODE_IMPL_WIN_VIRTUAL_DISPLAY;
 
-const IDD_DEVICE_STRING: &'static str = "RustDeskIddDriver Device\0";
 const CONFIG_KEY_REG_RECOVERY: &str = "reg_recovery";
 
 struct Display {
@@ -84,7 +85,7 @@ impl PrivacyModeImpl {
         }
     }
 
-    // mainly from https://github.com/fufesou/rustdesk/blob/44c3a52ca8502cf53b58b59db130611778d34dbe/libs/scrap/src/dxgi/mod.rs#L365
+    // mainly from https://github.com/rustdesk-org/rustdesk/blob/44c3a52ca8502cf53b58b59db130611778d34dbe/libs/scrap/src/dxgi/mod.rs#L365
     fn set_displays(&mut self) {
         self.displays.clear();
         self.virtual_displays.clear();
@@ -137,8 +138,9 @@ impl PrivacyModeImpl {
                 primary,
             };
 
-            if let Ok(s) = std::string::String::from_utf16(&dd.DeviceString) {
-                if &s[..IDD_DEVICE_STRING.len()] == IDD_DEVICE_STRING {
+            let ds = virtual_display_manager::get_cur_device_string();
+            if let Ok(s) = String::from_utf16(&dd.DeviceString) {
+                if s.len() >= ds.len() && &s[..ds.len()] == ds {
                     self.virtual_displays.push(display);
                     continue;
                 }
@@ -147,40 +149,32 @@ impl PrivacyModeImpl {
         }
     }
 
-    fn restore(&mut self) {
-        Self::restore_displays(&self.displays);
-        Self::restore_displays(&self.virtual_displays);
-        allow_err!(Self::commit_change_display(0));
-        self.restore_plug_out_monitor();
-    }
-
     fn restore_plug_out_monitor(&mut self) {
-        let _ = virtual_display_manager::plug_out_peer_request(&self.virtual_displays_added);
+        let _ = virtual_display_manager::plug_out_monitor_indices(
+            &self.virtual_displays_added,
+            true,
+            false,
+        );
         self.virtual_displays_added.clear();
     }
 
-    fn restore_displays(displays: &[Display]) {
-        for display in displays {
-            unsafe {
-                let mut dm = display.dm.clone();
-                let flags = if display.primary {
-                    CDS_NORESET | CDS_UPDATEREGISTRY | CDS_SET_PRIMARY
-                } else {
-                    CDS_NORESET | CDS_UPDATEREGISTRY
-                };
-                ChangeDisplaySettingsExW(
-                    display.name.as_ptr(),
-                    &mut dm,
-                    std::ptr::null_mut(),
-                    flags,
-                    std::ptr::null_mut(),
-                );
-            }
+    #[inline]
+    fn change_display_settings_ex_err_msg(rc: i32) -> String {
+        if rc != DISP_CHANGE_FAILED {
+            format!("ret: {}", rc)
+        } else {
+            format!(
+                "ret: {}, last error: {:?}",
+                rc,
+                std::io::Error::last_os_error()
+            )
         }
     }
 
-    fn set_primary_display(&mut self) -> ResultType<()> {
+    fn set_primary_display(&mut self) -> ResultType<String> {
+        // Multiple virtual displays with different origins are tested.
         let display = &self.virtual_displays[0];
+        let display_name = std::string::String::from_utf16(&display.name)?;
 
         #[allow(invalid_value)]
         let mut new_primary_dm: DEVMODEW = unsafe { std::mem::MaybeUninit::uninit().assume_init() };
@@ -201,9 +195,32 @@ impl PrivacyModeImpl {
                 );
             }
 
+            // Windows 24H2 requires the virtual display to be set first.
+            // No idea why, maybe the same issue: https://developercommunity.visualstudio.com/t/Windows-11-Enterprise-24H2-using-WinApi/10851936?sort=newest
+            let flags = CDS_UPDATEREGISTRY | CDS_NORESET;
+            let offx = new_primary_dm.u1.s2().dmPosition.x;
+            let offy = new_primary_dm.u1.s2().dmPosition.y;
+            new_primary_dm.u1.s2_mut().dmPosition.x = 0;
+            new_primary_dm.u1.s2_mut().dmPosition.y = 0;
+            new_primary_dm.dmFields |= DM_POSITION;
+            let rc = ChangeDisplaySettingsExW(
+                display.name.as_ptr(),
+                &mut new_primary_dm,
+                NULL as _,
+                flags | CDS_SET_PRIMARY,
+                NULL,
+            );
+            if rc != DISP_CHANGE_SUCCESSFUL {
+                let err = Self::change_display_settings_ex_err_msg(rc);
+                log::error!(
+                    "Failed ChangeDisplaySettingsEx, the virtual display, {}",
+                    &err
+                );
+                bail!("Failed ChangeDisplaySettingsEx, {}", err);
+            }
+
             let mut i: DWORD = 0;
             loop {
-                let mut flags = CDS_UPDATEREGISTRY | CDS_NORESET;
                 #[allow(invalid_value)]
                 let mut dd: DISPLAY_DEVICEW = std::mem::MaybeUninit::uninit().assume_init();
                 dd.cb = std::mem::size_of::<DISPLAY_DEVICEW>() as _;
@@ -216,9 +233,9 @@ impl PrivacyModeImpl {
                 if (dd.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP) == 0 {
                     continue;
                 }
-
+                // Skip the virtual display.
                 if dd.DeviceName == display.name {
-                    flags |= CDS_SET_PRIMARY;
+                    continue;
                 }
 
                 #[allow(invalid_value)]
@@ -235,8 +252,8 @@ impl PrivacyModeImpl {
                     );
                 }
 
-                dm.u1.s2_mut().dmPosition.x -= new_primary_dm.u1.s2().dmPosition.x;
-                dm.u1.s2_mut().dmPosition.y -= new_primary_dm.u1.s2().dmPosition.y;
+                dm.u1.s2_mut().dmPosition.x -= offx;
+                dm.u1.s2_mut().dmPosition.y -= offy;
                 dm.dmFields |= DM_POSITION;
                 let rc = ChangeDisplaySettingsExW(
                     dd.DeviceName.as_ptr(),
@@ -245,22 +262,34 @@ impl PrivacyModeImpl {
                     flags,
                     NULL,
                 );
-
                 if rc != DISP_CHANGE_SUCCESSFUL {
+                    let err = Self::change_display_settings_ex_err_msg(rc);
                     log::error!(
-                        "Failed ChangeDisplaySettingsEx, device name: {:?}, flags: {}, ret: {}",
+                        "Failed ChangeDisplaySettingsEx, device name: {:?}, flags: {}, {}",
                         std::string::String::from_utf16(&dd.DeviceName),
                         flags,
-                        rc
+                        &err
                     );
-                    bail!("Failed ChangeDisplaySettingsEx, ret: {}", rc);
+                    bail!("Failed ChangeDisplaySettingsEx, {}", err);
                 }
+
+                // If we want to set dpi, the following references may be helpful.
+                // And setting dpi should be called after changing the display settings.
+                // https://stackoverflow.com/questions/35233182/how-can-i-change-windows-10-display-scaling-programmatically-using-c-sharp
+                // https://github.com/lihas/windows-DPI-scaling-sample/blob/master/DPIHelper/DpiHelper.cpp
+                //
+                // But the official API does not provide a way to get/set dpi.
+                // https://learn.microsoft.com/en-us/windows/win32/api/wingdi/ne-wingdi-displayconfig_device_info_type
+                // https://github.com/lihas/windows-DPI-scaling-sample/blob/738ac18b7a7ce2d8fdc157eb825de9cb5eee0448/DPIHelper/DpiHelper.h#L37
             }
         }
 
-        Ok(())
+        Ok(display_name)
     }
 
+    // NOTE: We can't detect if the other virtual displays are physical displays or not.
+    // We can only use `DeviceString` == `virtual_display_manager::get_cur_device_string()` to detect if the display is a virtual display.
+    // The other virtual displays can't be restored after exiting the privacy mode on Windows 24H2.
     fn disable_physical_displays(&self) -> ResultType<()> {
         for display in &self.displays {
             let mut dm = display.dm.clone();
@@ -278,13 +307,14 @@ impl PrivacyModeImpl {
                     NULL as _,
                 );
                 if rc != DISP_CHANGE_SUCCESSFUL {
+                    let err = Self::change_display_settings_ex_err_msg(rc);
                     log::error!(
-                        "Failed ChangeDisplaySettingsEx, device name: {:?}, flags: {}, ret: {}",
+                        "Failed ChangeDisplaySettingsEx, device name: {:?}, flags: {}, {}",
                         std::string::String::from_utf16(&display.name),
                         flags,
-                        rc
+                        &err
                     );
-                    bail!("Failed ChangeDisplaySettingsEx, ret: {}", rc);
+                    bail!("Failed ChangeDisplaySettingsEx, {}", err);
                 }
             }
         }
@@ -300,12 +330,35 @@ impl PrivacyModeImpl {
         }]
     }
 
-    pub fn ensure_virtual_display(&mut self) -> ResultType<()> {
+    // This function will wait at most 6 seconds for the virtual displays to be ready.
+    // It's ok to wait, because:
+    // 1. A new thread is created to handle the async privacy mode.
+    // 2. The user is usually not in a hurry to turn on the privacy mode.
+    pub fn ensure_virtual_display(&mut self, is_async_mode: bool) -> ResultType<()> {
         if self.virtual_displays.is_empty() {
             let displays =
                 virtual_display_manager::plug_in_peer_request(vec![Self::default_display_modes()])?;
-            self.virtual_displays_added.extend(displays);
+            if is_async_mode {
+                thread::sleep(Duration::from_secs(1));
+            }
             self.set_displays();
+            // No physical displays, no need to use the privacy mode.
+            if self.displays.is_empty() {
+                virtual_display_manager::plug_out_monitor_indices(&displays, false, false)?;
+                bail!(NO_PHYSICAL_DISPLAYS);
+            }
+
+            if is_async_mode {
+                let now = std::time::Instant::now();
+                while self.virtual_displays.is_empty()
+                    && now.elapsed() < Duration::from_millis(5000)
+                {
+                    thread::sleep(Duration::from_millis(500));
+                    self.set_displays();
+                }
+            }
+
+            self.virtual_displays_added.extend(displays);
         }
 
         Ok(())
@@ -331,9 +384,10 @@ impl PrivacyModeImpl {
             //     }
             // }
 
-            let ret = ChangeDisplaySettingsExW(NULL as _, NULL as _, NULL as _, flags, NULL as _);
-            if ret != DISP_CHANGE_SUCCESSFUL {
-                bail!("Failed ChangeDisplaySettingsEx, ret: {}", ret);
+            let rc = ChangeDisplaySettingsExW(NULL as _, NULL as _, NULL as _, flags, NULL as _);
+            if rc != DISP_CHANGE_SUCCESSFUL {
+                let err = Self::change_display_settings_ex_err_msg(rc);
+                bail!("Failed ChangeDisplaySettingsEx, {}", err);
             }
 
             // if !desk_current.is_null() {
@@ -345,9 +399,55 @@ impl PrivacyModeImpl {
         }
         Ok(())
     }
+
+    fn restore(&mut self) {
+        Self::restore_displays(&self.displays);
+        Self::restore_displays(&self.virtual_displays);
+        allow_err!(Self::commit_change_display(0));
+        self.displays.clear();
+        self.virtual_displays.clear();
+        let is_virtual_display_added = self.virtual_displays_added.len() > 0;
+        if is_virtual_display_added {
+            self.restore_plug_out_monitor();
+        } else {
+            // https://github.com/rustdesk/rustdesk/pull/12114#issuecomment-2983054370
+            // No virtual displays added, we need to change the display combination to force the display settings to be reloaded.
+            // This function changes the user behavior of the virtual displays.
+            // But it makes the privacy mode more stable.
+            // No need to restore the virtual displays. It's easy to notice that the virtual displays are plugged out.
+            let _ = virtual_display_manager::plug_out_monitor(-1, true, false);
+
+            // We can't replug the virtual dislays here.
+            // TODO: plug out + plug in the virtual displays (`IDD_IMPL_AMYUNI`) in a short time makes the server side crash.
+        }
+    }
+
+    fn restore_displays(displays: &[Display]) {
+        for display in displays {
+            unsafe {
+                let mut dm = display.dm.clone();
+                let flags = if display.primary {
+                    CDS_NORESET | CDS_UPDATEREGISTRY | CDS_SET_PRIMARY
+                } else {
+                    CDS_NORESET | CDS_UPDATEREGISTRY
+                };
+                ChangeDisplaySettingsExW(
+                    display.name.as_ptr(),
+                    &mut dm,
+                    std::ptr::null_mut(),
+                    flags,
+                    std::ptr::null_mut(),
+                );
+            }
+        }
+    }
 }
 
 impl PrivacyMode for PrivacyModeImpl {
+    fn is_async_privacy_mode(&self) -> bool {
+        virtual_display_manager::is_amyuni_idd()
+    }
+
     fn init(&self) -> ResultType<()> {
         Ok(())
     }
@@ -367,25 +467,32 @@ impl PrivacyMode for PrivacyModeImpl {
         }
         self.set_displays();
         if self.displays.is_empty() {
-            log::debug!("No displays");
-            bail!(NO_DISPLAYS);
+            log::debug!("{}", NO_PHYSICAL_DISPLAYS);
+            bail!(NO_PHYSICAL_DISPLAYS);
         }
 
+        let is_async_mode = self.is_async_privacy_mode();
         let mut guard = TurnOnGuard {
             privacy_mode: self,
             succeeded: false,
         };
 
-        guard.ensure_virtual_display()?;
+        guard.ensure_virtual_display(is_async_mode)?;
         if guard.virtual_displays.is_empty() {
             log::debug!("No virtual displays");
-            bail!("No virtual displays");
+            bail!("No virtual displays.");
         }
 
         let reg_connectivity_1 = reg_display_settings::read_reg_connectivity()?;
-        guard.set_primary_display()?;
+        let primary_display_name = guard.set_primary_display()?;
         guard.disable_physical_displays()?;
         Self::commit_change_display(CDS_RESET)?;
+        // Explicitly set the resolution(virtual display) to 1920x1080.
+        allow_err!(crate::platform::change_resolution(
+            &primary_display_name,
+            1920,
+            1080
+        ));
         let reg_connectivity_2 = reg_display_settings::read_reg_connectivity()?;
 
         if let Some(reg_recovery) =
@@ -415,8 +522,11 @@ impl PrivacyMode for PrivacyModeImpl {
     ) -> ResultType<()> {
         self.check_off_conn_id(conn_id)?;
         super::win_input::unhook()?;
+        let _tmp_ignore_changed_holder = crate::display_service::temp_ignore_displays_changed();
         self.restore();
-        restore_reg_connectivity();
+        // We need to force restore the registry connectivity.
+        // This is because the registry connection may be changed by `self.restore()`, but will not be fully restored.
+        restore_reg_connectivity(false, true);
 
         if self.conn_id != INVALID_PRIVACY_MODE_CONN_ID {
             if let Some(state) = state {
@@ -457,121 +567,20 @@ fn reset_config_reg_connectivity() {
     Config::set_option(CONFIG_KEY_REG_RECOVERY.to_owned(), "".to_owned());
 }
 
-pub fn restore_reg_connectivity() {
+pub fn restore_reg_connectivity(plug_out_monitors: bool, force: bool) {
     let config_recovery_value = Config::get_option(CONFIG_KEY_REG_RECOVERY);
     if config_recovery_value.is_empty() {
         return;
     }
+    if plug_out_monitors {
+        let _ = virtual_display_manager::plug_out_monitor(-1, true, false);
+    }
     if let Ok(reg_recovery) =
         serde_json::from_str::<reg_display_settings::RegRecovery>(&config_recovery_value)
     {
-        if let Err(e) = reg_display_settings::restore_reg_connectivity(reg_recovery) {
+        if let Err(e) = reg_display_settings::restore_reg_connectivity(reg_recovery, force) {
             log::error!("Failed restore_reg_connectivity, error: {}", e);
         }
     }
     reset_config_reg_connectivity();
-}
-
-mod reg_display_settings {
-    use hbb_common::ResultType;
-    use serde_derive::{Deserialize, Serialize};
-    use std::collections::HashMap;
-    use winreg::{enums::*, RegValue};
-    const REG_GRAPHICS_DRIVERS_PATH: &str = "SYSTEM\\CurrentControlSet\\Control\\GraphicsDrivers";
-    const REG_CONNECTIVITY_PATH: &str = "Connectivity";
-
-    #[derive(Serialize, Deserialize, Debug)]
-    pub(super) struct RegRecovery {
-        path: String,
-        key: String,
-        old: (Vec<u8>, isize),
-        new: (Vec<u8>, isize),
-    }
-
-    pub(super) fn read_reg_connectivity() -> ResultType<HashMap<String, HashMap<String, RegValue>>>
-    {
-        let hklm = winreg::RegKey::predef(HKEY_LOCAL_MACHINE);
-        let reg_connectivity = hklm.open_subkey_with_flags(
-            format!("{}\\{}", REG_GRAPHICS_DRIVERS_PATH, REG_CONNECTIVITY_PATH),
-            KEY_READ,
-        )?;
-
-        let mut map_connectivity = HashMap::new();
-        for key in reg_connectivity.enum_keys() {
-            let key = key?;
-            let mut map_item = HashMap::new();
-            let reg_item = reg_connectivity.open_subkey_with_flags(&key, KEY_READ)?;
-            for value in reg_item.enum_values() {
-                let (name, value) = value?;
-                map_item.insert(name, value);
-            }
-            map_connectivity.insert(key, map_item);
-        }
-        Ok(map_connectivity)
-    }
-
-    pub(super) fn diff_recent_connectivity(
-        map1: HashMap<String, HashMap<String, RegValue>>,
-        map2: HashMap<String, HashMap<String, RegValue>>,
-    ) -> Option<RegRecovery> {
-        for (subkey, map_item2) in map2 {
-            if let Some(map_item1) = map1.get(&subkey) {
-                let key = "Recent";
-                if let Some(value1) = map_item1.get(key) {
-                    if let Some(value2) = map_item2.get(key) {
-                        if value1 != value2 {
-                            return Some(RegRecovery {
-                                path: format!(
-                                    "{}\\{}\\{}",
-                                    REG_GRAPHICS_DRIVERS_PATH, REG_CONNECTIVITY_PATH, subkey
-                                ),
-                                key: key.to_owned(),
-                                old: (value1.bytes.clone(), value1.vtype.clone() as isize),
-                                new: (value2.bytes.clone(), value2.vtype.clone() as isize),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    pub(super) fn restore_reg_connectivity(reg_recovery: RegRecovery) -> ResultType<()> {
-        let hklm = winreg::RegKey::predef(HKEY_LOCAL_MACHINE);
-        let reg_item = hklm.open_subkey_with_flags(&reg_recovery.path, KEY_READ | KEY_WRITE)?;
-        let cur_reg_value = reg_item.get_raw_value(&reg_recovery.key)?;
-        let new_reg_value = RegValue {
-            bytes: reg_recovery.new.0,
-            vtype: isize_to_reg_type(reg_recovery.new.1),
-        };
-        if cur_reg_value != new_reg_value {
-            return Ok(());
-        }
-        let reg_value = RegValue {
-            bytes: reg_recovery.old.0,
-            vtype: isize_to_reg_type(reg_recovery.old.1),
-        };
-        reg_item.set_raw_value(&reg_recovery.key, &reg_value)?;
-        Ok(())
-    }
-
-    #[inline]
-    fn isize_to_reg_type(i: isize) -> RegType {
-        match i {
-            0 => RegType::REG_NONE,
-            1 => RegType::REG_SZ,
-            2 => RegType::REG_EXPAND_SZ,
-            3 => RegType::REG_BINARY,
-            4 => RegType::REG_DWORD,
-            5 => RegType::REG_DWORD_BIG_ENDIAN,
-            6 => RegType::REG_LINK,
-            7 => RegType::REG_MULTI_SZ,
-            8 => RegType::REG_RESOURCE_LIST,
-            9 => RegType::REG_FULL_RESOURCE_DESCRIPTOR,
-            10 => RegType::REG_RESOURCE_REQUIREMENTS_LIST,
-            11 => RegType::REG_QWORD,
-            _ => RegType::REG_NONE,
-        }
-    }
 }

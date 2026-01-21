@@ -59,6 +59,7 @@ impl Display {
         })
     }
 
+    // Currently, wayland need to call wayland::clear() before call Display::all()
     pub fn all() -> io::Result<Vec<Display>> {
         Ok(if super::is_x11() {
             x11::Display::all()?
@@ -84,6 +85,27 @@ impl Display {
         match self {
             Display::X11(d) => d.height(),
             Display::WAYLAND(d) => d.height(),
+        }
+    }
+
+    pub fn scale(&self) -> f64 {
+        match self {
+            Display::X11(_d) => 1.0,
+            Display::WAYLAND(d) => d.scale(),
+        }
+    }
+
+    pub fn logical_width(&self) -> usize {
+        match self {
+            Display::X11(d) => d.width(),
+            Display::WAYLAND(d) => d.logical_width(),
+        }
+    }
+
+    pub fn logical_height(&self) -> usize {
+        match self {
+            Display::X11(d) => d.height(),
+            Display::WAYLAND(d) => d.logical_height(),
         }
     }
 

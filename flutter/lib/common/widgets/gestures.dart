@@ -1,6 +1,8 @@
 import 'dart:async';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
+import 'package:flutter_hbb/common/widgets/remote_input.dart';
 
 enum GestureState {
   none,
@@ -36,18 +38,24 @@ class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
   GestureDragEndCallback? onThreeFingerVerticalDragEnd;
 
   var _currentState = GestureState.none;
-  Timer? _debounceTimer;
 
   void _init() {
     debugPrint("CustomTouchGestureRecognizer init");
     // onStart = (d) {};
     onUpdate = (d) {
-      _debounceTimer?.cancel();
       if (d.pointerCount == 1 && _currentState != GestureState.oneFingerPan) {
-        onOneFingerStartDebounce(d);
+        _currentState = GestureState.oneFingerPan;
+        if (onOneFingerPanStart != null) {
+          onOneFingerPanStart!(DragStartDetails(
+              localPosition: d.localFocalPoint, globalPosition: d.focalPoint));
+        }
       } else if (d.pointerCount == 2 &&
           _currentState != GestureState.twoFingerScale) {
-        onTwoFingerStartDebounce(d);
+        _currentState = GestureState.twoFingerScale;
+        if (onTwoFingerScaleStart != null) {
+          onTwoFingerScaleStart!(ScaleStartDetails(
+              localFocalPoint: d.localFocalPoint, focalPoint: d.focalPoint));
+        }
       } else if (d.pointerCount == 3 &&
           _currentState != GestureState.threeFingerVerticalDrag) {
         _currentState = GestureState.threeFingerVerticalDrag;
@@ -82,11 +90,10 @@ class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
     };
     onEnd = (d) {
       debugPrint("ScaleGestureRecognizer onEnd");
-      _debounceTimer?.cancel();
       // end
       switch (_currentState) {
         case GestureState.oneFingerPan:
-          debugPrint("TwoFingerState.pan onEnd");
+          debugPrint("OneFingerState.pan onEnd");
           if (onOneFingerPanEnd != null) {
             onOneFingerPanEnd!(_getDragEndDetails(d));
           }
@@ -95,6 +102,12 @@ class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
           debugPrint("TwoFingerState.scale onEnd");
           if (onTwoFingerScaleEnd != null) {
             onTwoFingerScaleEnd!(d);
+          }
+          if (isSpecialHoldDragActive) {
+            // If we are in special drag mode, we need to reset the state.
+            // Otherwise, the next `onTwoFingerScaleUpdate()` will handle a wrong `focalPoint`.
+            _currentState = GestureState.none;
+            return;
           }
           break;
         case GestureState.threeFingerVerticalDrag:
@@ -106,50 +119,8 @@ class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
         default:
           break;
       }
-      _debounceTimer = Timer(Duration(milliseconds: 200), () {
-        _currentState = GestureState.none;
-      });
+      _currentState = GestureState.none;
     };
-  }
-
-  void onOneFingerStartDebounce(ScaleUpdateDetails d) {
-    start(ScaleUpdateDetails d) {
-      _currentState = GestureState.oneFingerPan;
-      if (onOneFingerPanStart != null) {
-        onOneFingerPanStart!(DragStartDetails(
-            localPosition: d.localFocalPoint, globalPosition: d.focalPoint));
-      }
-    }
-
-    if (_currentState != GestureState.none) {
-      _debounceTimer = Timer(Duration(milliseconds: 200), () {
-        start(d);
-        debugPrint("debounce start oneFingerPan");
-      });
-    } else {
-      start(d);
-      debugPrint("start oneFingerPan");
-    }
-  }
-
-  void onTwoFingerStartDebounce(ScaleUpdateDetails d) {
-    start(ScaleUpdateDetails d) {
-      _currentState = GestureState.twoFingerScale;
-      if (onTwoFingerScaleStart != null) {
-        onTwoFingerScaleStart!(ScaleStartDetails(
-            localFocalPoint: d.localFocalPoint, focalPoint: d.focalPoint));
-      }
-    }
-
-    if (_currentState == GestureState.threeFingerVerticalDrag) {
-      _debounceTimer = Timer(Duration(milliseconds: 200), () {
-        start(d);
-        debugPrint("debounce start twoFingerScale");
-      });
-    } else {
-      start(d);
-      debugPrint("start twoFingerScale");
-    }
   }
 
   DragUpdateDetails _getDragUpdateDetails(ScaleUpdateDetails d) =>

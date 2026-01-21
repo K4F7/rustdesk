@@ -9,9 +9,9 @@
   <b>Kami membutuhkan bantuanmu untuk menterjemahkan file README dan <a href="https://github.com/rustdesk/rustdesk/tree/master/src/lang">RustDesk UI</a> ke Bahasa Indonesia</b>
 </p>
 
-Mari mengobrol bersama kami: [Discord](https://discord.gg/nDceKgxnkV) | [Twitter](https://twitter.com/rustdesk) | [Reddit](https://www.reddit.com/r/rustdesk)
+Mari mengobrol bersama kami: [Discord](https://discord.gg/nDceKgxnkV) | [Twitter](https://twitter.com/rustdesk) | [Reddit](https://www.reddit.com/r/rustdesk) | [YouTube](https://www.youtube.com/@rustdesk)
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I2I04VU09)
+[![RustDesk Server Pro](https://img.shields.io/badge/RustDesk%20Server%20Pro-Fitur%20Lanjutan-blue)](https://rustdesk.com/pricing.html)
 
 [![Open Bounties](https://img.shields.io/endpoint?url=https%3A%2F%2Fconsole.algora.io%2Fapi%2Fshields%2Frustdesk%2Fbounties%3Fstatus%3Dopen)](https://console.algora.io/org/rustdesk/bounties?status=open)
 
@@ -30,20 +30,6 @@ RustDesk mengajak semua orang untuk ikut berkontribusi. Lihat [`docs/CONTRIBUTIN
 [<img src="https://fdroid.gitlab.io/artwork/badge/get-it-on.png"
     alt="Get it on F-Droid"
     height="80">](https://f-droid.org/en/packages/com.carriez.flutter_hbb)
-
-## Server Publik Gratis
-
-Di bawah ini merupakan server gratis yang bisa kamu gunakan, seiring dengan waktu mungkin akan terjadi perubahan spesifikasi pada setiap server yang ada. Jika lokasi kamu berada jauh dengan salah satu server yang tersedia, kemungkinan koneksi akan terasa lambat ketika melakukan proses remote.
-| Lokasi | Penyedia | Spesifikasi |
-| --------- | ------------- | ------------------ |
-| Jerman | [Hetzner](https://www.hetzner.com) | 2 vCPU / 4GB RAM |
-| Ukraina (Kyiv) | [dc.volia](https://dc.volia.com) | 2 vCPU / 4GB RAM |
-
-## Dev Container
-
-[![Open in Dev Containers](https://img.shields.io/static/v1?label=Dev%20Container&message=Open&color=blue&logo=visualstudiocode)](https://vscode.dev/redirect?url=vscode://ms-vscode-remote.remote-containers/cloneInVolume?url=https://github.com/rustdesk/rustdesk)
-
-Apabila PC kamu sudah terinstal VS Code dan Docker, kamu bisa mengklik badge yang ada diatas untuk memulainya. Dengan mengklik badge tersebut secara otomatis akan menginstal ekstensi pada VS Code, lakukan kloning (clone) source code kedalam container volume, dan aktifkan dev container untuk menggunakannya.
 
 ## Dependensi
 

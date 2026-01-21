@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:async';
-import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
@@ -8,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/common/shared_state.dart';
 import 'package:flutter_hbb/consts.dart';
+import 'package:flutter_hbb/models/input_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
 import 'package:flutter_hbb/desktop/pages/remote_page.dart';
 import 'package:flutter_hbb/desktop/widgets/remote_toolbar.dart';
@@ -46,7 +46,6 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
   static const IconData selectedIcon = Icons.desktop_windows_sharp;
   static const IconData unselectedIcon = Icons.desktop_windows_outlined;
 
-  late ToolbarState _toolbarState;
   String? peerId;
   bool _isScreenRectSet = false;
   int? _display;
@@ -54,7 +53,6 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
   var connectionMap = RxList<Widget>.empty(growable: true);
 
   _ConnectionTabPageState(Map<String, dynamic> params) {
-    _toolbarState = ToolbarState();
     RemoteCountState.init();
     peerId = params['id'];
     final sessionId = params['session_id'];
@@ -73,7 +71,7 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
           final ffi = remotePage.ffi;
           bind.setCurSessionId(sessionId: ffi.sessionId);
         }
-        WindowController.fromWindowId(windowId())
+        WindowController.fromWindowId(params['windowId'])
             .setTitle(getWindowNameWithId(id));
         UnreadChatCountState.find(id).value = 0;
       };
@@ -82,7 +80,15 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
         label: peerId!,
         selectedIcon: selectedIcon,
         unselectedIcon: unselectedIcon,
-        onTabCloseButton: () => tabController.closeBy(peerId),
+        onTabCloseButton: () async {
+          if (await desktopTryShowTabAuditDialogCloseCancelled(
+            id: peerId!,
+            tabController: tabController,
+          )) {
+            return;
+          }
+          tabController.closeBy(peerId!);
+        },
         page: RemotePage(
           key: ValueKey(peerId),
           id: peerId!,
@@ -91,122 +97,23 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
           display: display,
           displays: displays?.cast<int>(),
           password: params['password'],
-          toolbarState: _toolbarState,
+          toolbarState: ToolbarState(),
           tabController: tabController,
           switchUuid: params['switch_uuid'],
           forceRelay: params['forceRelay'],
+          isSharedPassword: params['isSharedPassword'],
         ),
       ));
       _update_remote_count();
     }
+    tabController.onRemoved = (_, id) => onRemoveId(id);
+    rustDeskWinManager.setMethodHandler(_remoteMethodHandler);
   }
 
   @override
   void initState() {
     super.initState();
 
-    tabController.onRemoved = (_, id) => onRemoveId(id);
-
-    rustDeskWinManager.setMethodHandler((call, fromWindowId) async {
-      print(
-          "[Remote Page] call ${call.method} with args ${call.arguments} from window $fromWindowId");
-
-      dynamic returnValue;
-      // for simplify, just replace connectionId
-      if (call.method == kWindowEventNewRemoteDesktop) {
-        final args = jsonDecode(call.arguments);
-        final id = args['id'];
-        final switchUuid = args['switch_uuid'];
-        final sessionId = args['session_id'];
-        final tabWindowId = args['tab_window_id'];
-        final display = args['display'];
-        final displays = args['displays'];
-        final screenRect = parseParamScreenRect(args);
-        windowOnTop(windowId());
-        tryMoveToScreenAndSetFullscreen(screenRect);
-        if (tabController.length == 0) {
-          // Show the hidden window.
-          if (Platform.isMacOS && stateGlobal.closeOnFullscreen == true) {
-            stateGlobal.setFullscreen(true);
-          }
-          // Reset the state
-          stateGlobal.closeOnFullscreen = null;
-        }
-        ConnectionTypeState.init(id);
-        _toolbarState.setShow(
-            bind.mainGetUserDefaultOption(key: 'collapse_toolbar') != 'Y');
-        tabController.add(TabInfo(
-          key: id,
-          label: id,
-          selectedIcon: selectedIcon,
-          unselectedIcon: unselectedIcon,
-          onTabCloseButton: () => tabController.closeBy(id),
-          page: RemotePage(
-            key: ValueKey(id),
-            id: id,
-            sessionId: sessionId == null ? null : SessionID(sessionId),
-            tabWindowId: tabWindowId,
-            display: display,
-            displays: displays?.cast<int>(),
-            password: args['password'],
-            toolbarState: _toolbarState,
-            tabController: tabController,
-            switchUuid: switchUuid,
-            forceRelay: args['forceRelay'],
-          ),
-        ));
-      } else if (call.method == kWindowDisableGrabKeyboard) {
-        // ???
-      } else if (call.method == "onDestroy") {
-        tabController.clear();
-      } else if (call.method == kWindowActionRebuild) {
-        reloadCurrentWindow();
-      } else if (call.method == kWindowEventActiveSession) {
-        final jumpOk = tabController.jumpToByKey(call.arguments);
-        if (jumpOk) {
-          windowOnTop(windowId());
-        }
-        return jumpOk;
-      } else if (call.method == kWindowEventActiveDisplaySession) {
-        final args = jsonDecode(call.arguments);
-        final id = args['id'];
-        final display = args['display'];
-        final jumpOk = tabController.jumpToByKeyAndDisplay(id, display);
-        if (jumpOk) {
-          windowOnTop(windowId());
-        }
-        return jumpOk;
-      } else if (call.method == kWindowEventGetRemoteList) {
-        return tabController.state.value.tabs
-            .map((e) => e.key)
-            .toList()
-            .join(',');
-      } else if (call.method == kWindowEventGetSessionIdList) {
-        return tabController.state.value.tabs
-            .map((e) => '${e.key},${(e.page as RemotePage).ffi.sessionId}')
-            .toList()
-            .join(';');
-      } else if (call.method == kWindowEventGetCachedSessionData) {
-        // Ready to show new window and close old tab.
-        final args = jsonDecode(call.arguments);
-        final id = args['id'];
-        final close = args['close'];
-        try {
-          final remotePage = tabController.state.value.tabs
-              .firstWhere((tab) => tab.key == id)
-              .page as RemotePage;
-          returnValue = remotePage.ffi.ffiModel.cachedPeerData.toString();
-        } catch (e) {
-          debugPrint('Failed to get cached session data: $e');
-        }
-        if (close && returnValue != null) {
-          closeSessionOnDispose[id] = false;
-          tabController.closeBy(id);
-        }
-      }
-      _update_remote_count();
-      return returnValue;
-    });
     if (!_isScreenRectSet) {
       Future.delayed(Duration.zero, () {
         restoreWindowPosition(
@@ -222,111 +129,106 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
   }
 
   @override
-  void dispose() {
-    super.dispose();
-    _toolbarState.save();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final tabWidget = Obx(
-      () => Container(
-        decoration: BoxDecoration(
-          border: Border.all(
-              color: MyTheme.color(context).border!,
-              width: stateGlobal.windowBorderWidth.value),
+    final child = Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.background,
+      body: DesktopTab(
+        controller: tabController,
+        onWindowCloseButton: handleWindowCloseButton,
+        tail: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _RelativeMouseModeHint(tabController: tabController),
+            const AddButton(),
+          ],
         ),
-        child: Scaffold(
-          backgroundColor: Theme.of(context).colorScheme.background,
-          body: DesktopTab(
-            controller: tabController,
-            onWindowCloseButton: handleWindowCloseButton,
-            tail: const AddButton().paddingOnly(left: 10),
-            pageViewBuilder: (pageView) => pageView,
-            labelGetter: DesktopTab.tablabelGetter,
-            tabBuilder: (key, icon, label, themeConf) => Obx(() {
-              final connectionType = ConnectionTypeState.find(key);
-              if (!connectionType.isValid()) {
-                return Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    icon,
-                    label,
-                  ],
-                );
-              } else {
-                bool secure =
-                    connectionType.secure.value == ConnectionType.strSecure;
-                bool direct =
-                    connectionType.direct.value == ConnectionType.strDirect;
-                String msgConn;
-                if (secure && direct) {
-                  msgConn = translate("Direct and encrypted connection");
-                } else if (secure && !direct) {
-                  msgConn = translate("Relayed and encrypted connection");
-                } else if (!secure && direct) {
-                  msgConn = translate("Direct and unencrypted connection");
-                } else {
-                  msgConn = translate("Relayed and unencrypted connection");
-                }
-                var msgFingerprint = '${translate('Fingerprint')}:\n';
-                var fingerprint = FingerprintState.find(key).value;
-                if (fingerprint.isEmpty) {
-                  fingerprint = 'N/A';
-                }
-                if (fingerprint.length > 5 * 8) {
-                  var first = fingerprint.substring(0, 39);
-                  var second = fingerprint.substring(40);
-                  msgFingerprint += '$first\n$second';
-                } else {
-                  msgFingerprint += fingerprint;
-                }
+        selectedBorderColor: MyTheme.accent,
+        pageViewBuilder: (pageView) => pageView,
+        labelGetter: DesktopTab.tablabelGetter,
+        tabBuilder: (key, icon, label, themeConf) => Obx(() {
+          final connectionType = ConnectionTypeState.find(key);
+          if (!connectionType.isValid()) {
+            return Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                icon,
+                label,
+              ],
+            );
+          } else {
+            bool secure =
+                connectionType.secure.value == ConnectionType.strSecure;
+            bool direct =
+                connectionType.direct.value == ConnectionType.strDirect;
+            String msgConn = getConnectionText(
+                secure, direct, connectionType.stream_type.value);
+            var msgFingerprint = '${translate('Fingerprint')}:\n';
+            var fingerprint = FingerprintState.find(key).value;
+            if (fingerprint.isEmpty) {
+              fingerprint = 'N/A';
+            }
+            if (fingerprint.length > 5 * 8) {
+              var first = fingerprint.substring(0, 39);
+              var second = fingerprint.substring(40);
+              msgFingerprint += '$first\n$second';
+            } else {
+              msgFingerprint += fingerprint;
+            }
 
-                final tab = Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    icon,
-                    Tooltip(
-                      message: '$msgConn\n$msgFingerprint',
-                      child: SvgPicture.asset(
-                        'assets/${connectionType.secure.value}${connectionType.direct.value}.svg',
-                        width: themeConf.iconSize,
-                        height: themeConf.iconSize,
-                      ).paddingOnly(right: 5),
-                    ),
-                    label,
-                    unreadMessageCountBuilder(UnreadChatCountState.find(key))
-                        .marginOnly(left: 4),
-                  ],
-                );
+            final tab = Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                icon,
+                Tooltip(
+                  message: '$msgConn\n$msgFingerprint',
+                  child: SvgPicture.asset(
+                    'assets/${connectionType.secure.value}${connectionType.direct.value}.svg',
+                    width: themeConf.iconSize,
+                    height: themeConf.iconSize,
+                  ).paddingOnly(right: 5),
+                ),
+                label,
+                unreadMessageCountBuilder(UnreadChatCountState.find(key))
+                    .marginOnly(left: 4),
+              ],
+            );
 
-                return Listener(
-                  onPointerDown: (e) {
-                    if (e.kind != ui.PointerDeviceKind.mouse) {
-                      return;
-                    }
-                    final remotePage = tabController.state.value.tabs
-                        .firstWhere((tab) => tab.key == key)
-                        .page as RemotePage;
-                    if (remotePage.ffi.ffiModel.pi.isSet.isTrue &&
-                        e.buttons == 2) {
-                      showRightMenu(
-                        (CancelFunc cancelFunc) {
-                          return _tabMenuBuilder(key, cancelFunc);
-                        },
-                        target: e.position,
-                      );
-                    }
-                  },
-                  child: tab,
-                );
-              }
-            }),
-          ),
-        ),
+            return Listener(
+              onPointerDown: (e) {
+                if (e.kind != ui.PointerDeviceKind.mouse) {
+                  return;
+                }
+                final remotePage = tabController.state.value.tabs
+                    .firstWhere((tab) => tab.key == key)
+                    .page as RemotePage;
+                if (remotePage.ffi.ffiModel.pi.isSet.isTrue && e.buttons == 2) {
+                  showRightMenu(
+                    (CancelFunc cancelFunc) {
+                      return _tabMenuBuilder(key, cancelFunc);
+                    },
+                    target: e.position,
+                  );
+                }
+              },
+              child: tab,
+            );
+          }
+        }),
       ),
     );
-    return Platform.isMacOS || kUseCompatibleUiMode
+    final tabWidget = isLinux
+        ? buildVirtualWindowFrame(context, child)
+        : workaroundWindowBorder(
+            context,
+            Obx(() => Container(
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                        color: MyTheme.color(context).border!,
+                        width: stateGlobal.windowBorderWidth.value),
+                  ),
+                  child: child,
+                )));
+    return isMacOS || kUseCompatibleUiMode
         ? tabWidget
         : Obx(() => SubWindowDragToResizeArea(
               key: contentKey,
@@ -334,6 +236,7 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
               // Specially configured for a better resize area and remote control.
               childPadding: kDragToResizeAreaPadding,
               resizeEdgeSize: stateGlobal.resizeEdgeSize.value,
+              enableResizeEdges: subWindowManagerEnableResizeEdges,
               windowId: stateGlobal.windowId,
             ));
   }
@@ -349,15 +252,16 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
     final pi = ffi.ffiModel.pi;
     final perms = ffi.ffiModel.permissions;
     final sessionId = ffi.sessionId;
+    final toolbarState = remotePage.toolbarState;
     menu.addAll([
       MenuEntryButton<String>(
         childBuilder: (TextStyle? style) => Obx(() => Text(
               translate(
-                  _toolbarState.show.isTrue ? 'Hide Toolbar' : 'Show Toolbar'),
+                  toolbarState.hide.isTrue ? 'Show Toolbar' : 'Hide Toolbar'),
               style: style,
             )),
         proc: () {
-          _toolbarState.switchShow();
+          toolbarState.switchHide(sessionId);
           cancelFunc();
         },
         padding: padding,
@@ -371,8 +275,10 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
           style: style,
         ),
         proc: () async {
-          await DesktopMultiWindow.invokeMethod(kMainWindowId,
-              kWindowEventMoveTabToNewWindow, '${windowId()},$key,$sessionId');
+          await DesktopMultiWindow.invokeMethod(
+              kMainWindowId,
+              kWindowEventMoveTabToNewWindow,
+              '${windowId()},$key,$sessionId,RemoteDesktop');
           cancelFunc();
         },
         padding: padding,
@@ -424,7 +330,13 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
           translate('Close'),
           style: style,
         ),
-        proc: () {
+        proc: () async {
+          if (await desktopTryShowTabAuditDialogCloseCancelled(
+            id: key,
+            tabController: tabController,
+          )) {
+            return;
+          }
           tabController.closeBy(key);
           cancelFunc();
         },
@@ -448,7 +360,6 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
 
   void onRemoveId(String id) async {
     if (tabController.state.value.tabs.isEmpty) {
-      stateGlobal.setFullscreen(false, procWnd: false);
       // Keep calling until the window status is hidden.
       //
       // Workaround for Windows:
@@ -469,6 +380,8 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
       loopCloseWindow();
     }
     ConnectionTypeState.delete(id);
+    // Clean up relative mouse mode state for this peer.
+    stateGlobal.relativeMouseModeState.remove(id);
     _update_remote_count();
   }
 
@@ -478,13 +391,21 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
 
   Future<bool> handleWindowCloseButton() async {
     final connLength = tabController.length;
+    if (connLength == 1) {
+      if (await desktopTryShowTabAuditDialogCloseCancelled(
+        id: tabController.state.value.tabs[0].key,
+        tabController: tabController,
+      )) {
+        return false;
+      }
+    }
     if (connLength <= 1) {
       tabController.clear();
       return true;
     } else {
-      final opt = "enable-confirm-closing-tabs";
       final bool res;
-      if (!option2bool(opt, bind.mainGetLocalOption(key: opt))) {
+      if (!option2bool(kOptionEnableConfirmClosingTabs,
+          bind.mainGetLocalOption(key: kOptionEnableConfirmClosingTabs))) {
         res = true;
       } else {
         res = await closeConfirmDialog();
@@ -498,4 +419,206 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
 
   _update_remote_count() =>
       RemoteCountState.find().value = tabController.length;
+
+  Future<dynamic> _remoteMethodHandler(call, fromWindowId) async {
+    debugPrint(
+        "[Remote Page] call ${call.method} with args ${call.arguments} from window $fromWindowId");
+
+    dynamic returnValue;
+    // for simplify, just replace connectionId
+    if (call.method == kWindowEventNewRemoteDesktop) {
+      final args = jsonDecode(call.arguments);
+      final id = args['id'];
+      final switchUuid = args['switch_uuid'];
+      final sessionId = args['session_id'];
+      final tabWindowId = args['tab_window_id'];
+      final display = args['display'];
+      final displays = args['displays'];
+      final screenRect = parseParamScreenRect(args);
+      final prePeerCount = tabController.length;
+      Future.delayed(Duration.zero, () async {
+        if (stateGlobal.fullscreen.isTrue) {
+          await WindowController.fromWindowId(windowId()).setFullscreen(false);
+          stateGlobal.setFullscreen(false, procWnd: false);
+        }
+        await setNewConnectWindowFrame(windowId(), id!, prePeerCount,
+            WindowType.RemoteDesktop, display, screenRect);
+        Future.delayed(Duration(milliseconds: isWindows ? 100 : 0), () async {
+          await windowOnTop(windowId());
+        });
+      });
+      ConnectionTypeState.init(id);
+      tabController.add(TabInfo(
+        key: id,
+        label: id,
+        selectedIcon: selectedIcon,
+        unselectedIcon: unselectedIcon,
+        onTabCloseButton: () async {
+          if (await desktopTryShowTabAuditDialogCloseCancelled(
+            id: id,
+            tabController: tabController,
+          )) {
+            return;
+          }
+          tabController.closeBy(id);
+        },
+        page: RemotePage(
+          key: ValueKey(id),
+          id: id,
+          sessionId: sessionId == null ? null : SessionID(sessionId),
+          tabWindowId: tabWindowId,
+          display: display,
+          displays: displays?.cast<int>(),
+          password: args['password'],
+          toolbarState: ToolbarState(),
+          tabController: tabController,
+          switchUuid: switchUuid,
+          forceRelay: args['forceRelay'],
+          isSharedPassword: args['isSharedPassword'],
+        ),
+      ));
+    } else if (call.method == kWindowDisableGrabKeyboard) {
+      // ???
+    } else if (call.method == "onDestroy") {
+      tabController.clear();
+    } else if (call.method == kWindowActionRebuild) {
+      reloadCurrentWindow();
+    } else if (call.method == kWindowEventActiveSession) {
+      final jumpOk = tabController.jumpToByKey(call.arguments);
+      if (jumpOk) {
+        windowOnTop(windowId());
+      }
+      return jumpOk;
+    } else if (call.method == kWindowEventActiveDisplaySession) {
+      final args = jsonDecode(call.arguments);
+      final id = args['id'];
+      final display = args['display'];
+      final jumpOk = tabController.jumpToByKeyAndDisplay(id, display);
+      if (jumpOk) {
+        windowOnTop(windowId());
+      }
+      return jumpOk;
+    } else if (call.method == kWindowEventGetRemoteList) {
+      return tabController.state.value.tabs
+          .map((e) => e.key)
+          .toList()
+          .join(',');
+    } else if (call.method == kWindowEventGetSessionIdList) {
+      return tabController.state.value.tabs
+          .map((e) => '${e.key},${(e.page as RemotePage).ffi.sessionId}')
+          .toList()
+          .join(';');
+    } else if (call.method == kWindowEventGetCachedSessionData) {
+      // Ready to show new window and close old tab.
+      final args = jsonDecode(call.arguments);
+      final id = args['id'];
+      final close = args['close'];
+      try {
+        final remotePage = tabController.state.value.tabs
+            .firstWhere((tab) => tab.key == id)
+            .page as RemotePage;
+        returnValue = remotePage.ffi.ffiModel.cachedPeerData.toString();
+      } catch (e) {
+        debugPrint('Failed to get cached session data: $e');
+      }
+      if (close && returnValue != null) {
+        closeSessionOnDispose[id] = false;
+        tabController.closeBy(id);
+      }
+    } else if (call.method == kWindowEventRemoteWindowCoords) {
+      final remotePage =
+          tabController.state.value.selectedTabInfo.page as RemotePage;
+      final ffi = remotePage.ffi;
+      final displayRect = ffi.ffiModel.displaysRect();
+      if (displayRect != null) {
+        final wc = WindowController.fromWindowId(windowId());
+        Rect? frame;
+        try {
+          frame = await wc.getFrame();
+        } catch (e) {
+          debugPrint(
+              "Failed to get frame of window $windowId, it may be hidden");
+        }
+        if (frame != null) {
+          ffi.cursorModel.moveLocal(0, 0);
+          final coords = RemoteWindowCoords(
+              frame,
+              CanvasCoords.fromCanvasModel(ffi.canvasModel),
+              CursorCoords.fromCursorModel(ffi.cursorModel),
+              displayRect);
+          returnValue = jsonEncode(coords.toJson());
+        }
+      }
+    } else if (call.method == kWindowEventSetFullscreen) {
+      stateGlobal.setFullscreen(call.arguments == 'true');
+    }
+    _update_remote_count();
+    return returnValue;
+  }
+}
+
+/// A widget that displays a hint in the tab bar when relative mouse mode is active.
+/// This helps users remember how to exit relative mouse mode.
+class _RelativeMouseModeHint extends StatelessWidget {
+  final DesktopTabController tabController;
+
+  const _RelativeMouseModeHint({Key? key, required this.tabController})
+      : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Obx(() {
+      // Check if there are any tabs
+      if (tabController.state.value.tabs.isEmpty) {
+        return const SizedBox.shrink();
+      }
+
+      // Get current selected tab's RemotePage
+      final selectedTabInfo = tabController.state.value.selectedTabInfo;
+      if (selectedTabInfo.page is! RemotePage) {
+        return const SizedBox.shrink();
+      }
+
+      final remotePage = selectedTabInfo.page as RemotePage;
+      final String peerId = remotePage.id;
+
+      // Use global state to check relative mouse mode (synced from InputModel).
+      // This avoids timing issues with FFI registration.
+      final isRelativeMouseMode =
+          stateGlobal.relativeMouseModeState[peerId] ?? false;
+
+      if (!isRelativeMouseMode) {
+        return const SizedBox.shrink();
+      }
+
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        margin: const EdgeInsets.only(right: 8),
+        decoration: BoxDecoration(
+          color: Colors.orange.withOpacity(0.2),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: Colors.orange.withOpacity(0.5)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.mouse,
+              size: 14,
+              color: Colors.orange[700],
+            ),
+            const SizedBox(width: 4),
+            Text(
+              translate(
+                  'rel-mouse-exit-{${isMacOS ? "Cmd+G" : "Ctrl+Alt"}}-tip'),
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.orange[700],
+              ),
+            ),
+          ],
+        ),
+      );
+    });
+  }
 }

@@ -18,7 +18,10 @@ import android.widget.EditText
 import android.view.accessibility.AccessibilityEvent
 import android.view.ViewGroup.LayoutParams
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.KeyEvent as KeyEventAndroid
+import android.view.ViewConfiguration
 import android.graphics.Rect
+import android.media.AudioManager
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.AccessibilityServiceInfo.FLAG_INPUT_METHOD_EDITOR
 import android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
@@ -32,10 +35,15 @@ import hbb.MessageOuterClass.KeyEvent
 import hbb.MessageOuterClass.KeyboardMode
 import hbb.KeyEventConverter
 
-const val LIFT_DOWN = 9
-const val LIFT_MOVE = 8
-const val LIFT_UP = 10
+// const val BUTTON_UP = 2
+// const val BUTTON_BACK = 0x08
+
+const val LEFT_DOWN = 9
+const val LEFT_MOVE = 8
+const val LEFT_UP = 10
 const val RIGHT_UP = 18
+// (BUTTON_BACK << 3) | BUTTON_UP
+const val BACK_UP = 66
 const val WHEEL_BUTTON_DOWN = 33
 const val WHEEL_BUTTON_UP = 34
 const val WHEEL_DOWN = 523331
@@ -63,11 +71,14 @@ class InputService : AccessibilityService() {
     private val logTag = "input service"
     private var leftIsDown = false
     private var touchPath = Path()
+    private var stroke: GestureDescription.StrokeDescription? = null
     private var lastTouchGestureStartTime = 0L
     private var mouseX = 0
     private var mouseY = 0
     private var timer = Timer()
     private var recentActionTask: TimerTask? = null
+    // 100(tap timeout) + 400(long press timeout)
+    private val longPressDuration = ViewConfiguration.getTapTimeout().toLong() + ViewConfiguration.getLongPressTimeout().toLong()
 
     private val wheelActionsQueue = LinkedList<GestureDescription>()
     private var isWheelActionsPolling = false
@@ -75,12 +86,17 @@ class InputService : AccessibilityService() {
 
     private var fakeEditTextForTextStateCalculation: EditText? = null
 
+    private var lastX = 0
+    private var lastY = 0
+
+    private val volumeController: VolumeController by lazy { VolumeController(applicationContext.getSystemService(AUDIO_SERVICE) as AudioManager) }
+
     @RequiresApi(Build.VERSION_CODES.N)
     fun onMouseInput(mask: Int, _x: Int, _y: Int) {
         val x = max(0, _x)
         val y = max(0, _y)
 
-        if (mask == 0 || mask == LIFT_MOVE) {
+        if (mask == 0 || mask == LEFT_MOVE) {
             val oldX = mouseX
             val oldY = mouseY
             mouseX = x * SCREEN_INFO.scale
@@ -94,31 +110,30 @@ class InputService : AccessibilityService() {
             }
         }
 
-        // left button down ,was up
-        if (mask == LIFT_DOWN) {
+        // left button down, was up
+        if (mask == LEFT_DOWN) {
             isWaitingLongPress = true
             timer.schedule(object : TimerTask() {
                 override fun run() {
                     if (isWaitingLongPress) {
                         isWaitingLongPress = false
-                        leftIsDown = false
-                        endGesture(mouseX, mouseY)
+                        continueGesture(mouseX, mouseY)
                     }
                 }
-            }, LONG_TAP_DELAY * 4)
+            }, longPressDuration)
 
             leftIsDown = true
             startGesture(mouseX, mouseY)
             return
         }
 
-        // left down ,was down
+        // left down, was down
         if (leftIsDown) {
             continueGesture(mouseX, mouseY)
         }
 
-        // left up ,was down
-        if (mask == LIFT_UP) {
+        // left up, was down
+        if (mask == LEFT_UP) {
             if (leftIsDown) {
                 leftIsDown = false
                 isWaitingLongPress = false
@@ -128,6 +143,11 @@ class InputService : AccessibilityService() {
         }
 
         if (mask == RIGHT_UP) {
+            longPress(mouseX, mouseY)
+            return
+        }
+
+        if (mask == BACK_UP) {
             performGlobalAction(GLOBAL_ACTION_BACK)
             return
         }
@@ -237,18 +257,100 @@ class InputService : AccessibilityService() {
         }
     }
 
-    private fun startGesture(x: Int, y: Int) {
-        touchPath = Path()
-        touchPath.moveTo(x.toFloat(), y.toFloat())
-        lastTouchGestureStartTime = System.currentTimeMillis()
-    }
-
-    private fun continueGesture(x: Int, y: Int) {
-        touchPath.lineTo(x.toFloat(), y.toFloat())
+    @RequiresApi(Build.VERSION_CODES.N)
+    private fun performClick(x: Int, y: Int, duration: Long) {
+        val path = Path()
+        path.moveTo(x.toFloat(), y.toFloat())
+        try {
+            val longPressStroke = GestureDescription.StrokeDescription(path, 0, duration)
+            val builder = GestureDescription.Builder()
+            builder.addStroke(longPressStroke)
+            Log.d(logTag, "performClick x:$x y:$y time:$duration")
+            dispatchGesture(builder.build(), null, null)
+        } catch (e: Exception) {
+            Log.e(logTag, "performClick, error:$e")
+        }
     }
 
     @RequiresApi(Build.VERSION_CODES.N)
-    private fun endGesture(x: Int, y: Int) {
+    private fun longPress(x: Int, y: Int) {
+        performClick(x, y, longPressDuration)
+    }
+
+    private fun startGesture(x: Int, y: Int) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            touchPath.reset()
+        } else {
+            touchPath = Path()
+        }
+        touchPath.moveTo(x.toFloat(), y.toFloat())
+        lastTouchGestureStartTime = System.currentTimeMillis()
+        lastX = x
+        lastY = y
+    }
+
+    @RequiresApi(Build.VERSION_CODES.N)
+    private fun doDispatchGesture(x: Int, y: Int, willContinue: Boolean) {
+        touchPath.lineTo(x.toFloat(), y.toFloat())
+        var duration = System.currentTimeMillis() - lastTouchGestureStartTime
+        if (duration <= 0) {
+            duration = 1
+        }
+        try {
+            if (stroke == null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    stroke = GestureDescription.StrokeDescription(
+                        touchPath,
+                        0,
+                        duration,
+                        willContinue
+                    )
+                } else {
+                    stroke = GestureDescription.StrokeDescription(
+                        touchPath,
+                        0,
+                        duration
+                    )
+                }
+            } else {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    stroke = stroke?.continueStroke(touchPath, 0, duration, willContinue)
+                } else {
+                    stroke = null
+                    stroke = GestureDescription.StrokeDescription(
+                        touchPath,
+                        0,
+                        duration
+                    )
+                }
+            }
+            stroke?.let {
+                val builder = GestureDescription.Builder()
+                builder.addStroke(it)
+                Log.d(logTag, "doDispatchGesture x:$x y:$y time:$duration")
+                dispatchGesture(builder.build(), null, null)
+            }
+        } catch (e: Exception) {
+            Log.e(logTag, "doDispatchGesture, willContinue:$willContinue, error:$e")
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.N)
+    private fun continueGesture(x: Int, y: Int) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            doDispatchGesture(x, y, true)
+            touchPath.reset()
+            touchPath.moveTo(x.toFloat(), y.toFloat())
+            lastTouchGestureStartTime = System.currentTimeMillis()
+            lastX = x
+            lastY = y
+        } else {
+            touchPath.lineTo(x.toFloat(), y.toFloat())
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.N)
+    private fun endGestureBelowO(x: Int, y: Int) {
         try {
             touchPath.lineTo(x.toFloat(), y.toFloat())
             var duration = System.currentTimeMillis() - lastTouchGestureStartTime
@@ -270,29 +372,52 @@ class InputService : AccessibilityService() {
     }
 
     @RequiresApi(Build.VERSION_CODES.N)
+    private fun endGesture(x: Int, y: Int) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            doDispatchGesture(x, y, false)
+            touchPath.reset()
+            stroke = null
+        } else {
+            endGestureBelowO(x, y)
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.N)
     fun onKeyEvent(data: ByteArray) {
         val keyEvent = KeyEvent.parseFrom(data)
         val keyboardMode = keyEvent.getMode()
 
         var textToCommit: String? = null
 
-        if (keyboardMode == KeyboardMode.Legacy) {
-            if (keyEvent.hasChr() && keyEvent.getDown()) {
+        // [down] indicates the key's state(down or up).
+        // [press] indicates a click event(down and up).
+        // https://github.com/rustdesk/rustdesk/blob/3a7594755341f023f56fa4b6a43b60d6b47df88d/flutter/lib/models/input_model.dart#L688
+        if (keyEvent.hasSeq()) {
+            textToCommit = keyEvent.getSeq()
+        } else if (keyboardMode == KeyboardMode.Legacy) {
+            if (keyEvent.hasChr() && (keyEvent.getDown() || keyEvent.getPress())) {
                 val chr = keyEvent.getChr()
                 if (chr != null) {
                     textToCommit = String(Character.toChars(chr))
                 }
             }
         } else if (keyboardMode == KeyboardMode.Translate) {
-            if (keyEvent.hasSeq() && keyEvent.getDown()) {
-                val seq = keyEvent.getSeq()
-                if (seq != null) {
-                    textToCommit = seq
-                }
-            }
+        } else {
         }
 
         Log.d(logTag, "onKeyEvent $keyEvent textToCommit:$textToCommit")
+
+        var ke: KeyEventAndroid? = null
+        if (Build.VERSION.SDK_INT < 33 || textToCommit == null) {
+            ke = KeyEventConverter.toAndroidKeyEvent(keyEvent)
+        }
+        ke?.let { event ->
+            if (tryHandleVolumeKeyEvent(event)) {
+                return
+            } else if (tryHandlePowerKeyEvent(event)) {
+                return
+            }
+        }
 
         if (Build.VERSION.SDK_INT >= 33) {
             getInputMethod()?.let { inputMethod ->
@@ -302,8 +427,12 @@ class InputService : AccessibilityService() {
                             inputConnection.commitText(text, 1, null)
                         }
                     } else {
-                        KeyEventConverter.toAndroidKeyEvent(keyEvent).let { event ->
+                        ke?.let { event ->
                             inputConnection.sendKeyEvent(event)
+                            if (keyEvent.getPress()) {
+                                val actionUpEvent = KeyEventAndroid(KeyEventAndroid.ACTION_UP, event.keyCode)
+                                inputConnection.sendKeyEvent(actionUpEvent)
+                            }
                         }
                     }
                 }
@@ -311,18 +440,59 @@ class InputService : AccessibilityService() {
         } else {
             val handler = Handler(Looper.getMainLooper())
             handler.post {
-                KeyEventConverter.toAndroidKeyEvent(keyEvent)?.let { event ->
+                ke?.let { event ->
                     val possibleNodes = possibleAccessibiltyNodes()
                     Log.d(logTag, "possibleNodes:$possibleNodes")
                     for (item in possibleNodes) {
                         val success = trySendKeyEvent(event, item, textToCommit)
                         if (success) {
+                            if (keyEvent.getPress()) {
+                                val actionUpEvent = KeyEventAndroid(KeyEventAndroid.ACTION_UP, event.keyCode)
+                                trySendKeyEvent(actionUpEvent, item, textToCommit)
+                            }
                             break
                         }
                     }
                 }
             }
         }
+    }
+
+    private fun tryHandleVolumeKeyEvent(event: KeyEventAndroid): Boolean {
+        when (event.keyCode) {
+            KeyEventAndroid.KEYCODE_VOLUME_UP -> {
+                if (event.action == KeyEventAndroid.ACTION_DOWN) {
+                    volumeController.raiseVolume(null, true, AudioManager.STREAM_SYSTEM)
+                }
+                return true
+            }
+            KeyEventAndroid.KEYCODE_VOLUME_DOWN -> {
+                if (event.action == KeyEventAndroid.ACTION_DOWN) {
+                    volumeController.lowerVolume(null, true, AudioManager.STREAM_SYSTEM)
+                }
+                return true
+            }
+            KeyEventAndroid.KEYCODE_VOLUME_MUTE -> {
+                if (event.action == KeyEventAndroid.ACTION_DOWN) {
+                    volumeController.toggleMute(true, AudioManager.STREAM_SYSTEM)
+                }
+                return true
+            }
+            else -> {
+                return false
+            }
+        }
+    }
+
+    private fun tryHandlePowerKeyEvent(event: KeyEventAndroid): Boolean {
+        if (event.keyCode == KeyEventAndroid.KEYCODE_POWER) {
+            // Perform power dialog action when action is up
+            if (event.action == KeyEventAndroid.ACTION_UP) {
+                performGlobalAction(GLOBAL_ACTION_POWER_DIALOG);
+            }
+            return true
+        }
+        return false
     }
 
     private fun insertAccessibilityNode(list: LinkedList<AccessibilityNodeInfo>, node: AccessibilityNodeInfo) {
@@ -422,7 +592,7 @@ class InputService : AccessibilityService() {
         return linkedList
     }
 
-    private fun trySendKeyEvent(event: android.view.KeyEvent, node: AccessibilityNodeInfo, textToCommit: String?): Boolean {
+    private fun trySendKeyEvent(event: KeyEventAndroid, node: AccessibilityNodeInfo, textToCommit: String?): Boolean {
         node.refresh()
         this.fakeEditTextForTextStateCalculation?.setSelection(0,0)
         this.fakeEditTextForTextStateCalculation?.setText(null)
@@ -487,10 +657,10 @@ class InputService : AccessibilityService() {
 
                 it.layout(rect.left, rect.top, rect.right, rect.bottom)
                 it.onPreDraw()
-                if (event.action == android.view.KeyEvent.ACTION_DOWN) {
+                if (event.action == KeyEventAndroid.ACTION_DOWN) {
                     val succ = it.onKeyDown(event.getKeyCode(), event)
                     Log.d(logTag, "onKeyDown $succ")
-                } else if (event.action == android.view.KeyEvent.ACTION_UP) {
+                } else if (event.action == KeyEventAndroid.ACTION_UP) {
                     val success = it.onKeyUp(event.getKeyCode(), event)
                     Log.d(logTag, "keyup $success")
                 } else {}

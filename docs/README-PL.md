@@ -9,9 +9,9 @@
   <b>Potrzebujemy twojej pomocy w tłumaczeniu README na twój ojczysty język</b>
 </p>
 
-Porozmawiaj z nami na: [Discord](https://discord.gg/nDceKgxnkV) | [Twitter](https://twitter.com/rustdesk) | [Reddit](https://www.reddit.com/r/rustdesk)
+Porozmawiaj z nami na: [Discord](https://discord.gg/nDceKgxnkV) | [Twitter](https://twitter.com/rustdesk) | [Reddit](https://www.reddit.com/r/rustdesk) | [YouTube](https://www.youtube.com/@rustdesk)
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I2I04VU09)
+[![RustDesk Server Pro](https://img.shields.io/badge/RustDesk%20Server%20Pro-Zaawansowane%20Funkcje-blue)](https://rustdesk.com/pricing.html)
 
 Kolejny program do zdalnego pulpitu, napisany w Rust. Działa od samego początku, nie wymaga konfiguracji. Masz pełną kontrolę nad swoimi danymi, bez obaw o bezpieczeństwo. Możesz skorzystać z naszego darmowego serwera publicznego, [skonfigurować własny](https://rustdesk.com/server), lub [napisać własny serwer](https://github.com/rustdesk/rustdesk-server-demo).
 
@@ -28,22 +28,6 @@ RustDesk zaprasza do współpracy każdego. Zobacz [`docs/CONTRIBUTING-PL.md`](C
 [<img src="https://fdroid.gitlab.io/artwork/badge/get-it-on.png"
     alt="Get it on F-Droid"
     height="80">](https://f-droid.org/en/packages/com.carriez.flutter_hbb)
-
-## Darmowe Serwery Publiczne
-
-Poniżej znajdują się serwery, z których można korzystać za darmo, może się to zmienić z upływem czasu. Jeśli nie znajdujesz się w pobliżu jednego z nich, Twoja prędkość połączenia może być niska.
-| Lokalizacja | Dostawca | Specyfikacja |
-| --------- | ------------- | ------------------ |
-| Niemcy | Hetzner | 2 vCPU / 4GB RAM |
-| Ukraina (Kijów) | [dc.volia](https://dc.volia.com) | 2 vCPU / 4GB RAM |
-
-## Konterner Programisty (Dev Container)
-
-[![Otwórz w Kontenerze programisty](https://img.shields.io/static/v1?label=Dev%20Container&message=Open&color=blue&logo=visualstudiocode)](https://vscode.dev/redirect?url=vscode://ms-vscode-remote.remote-containers/cloneInVolume?url=https://github.com/rustdesk/rustdesk)
-
-Jeżeli masz zainstalowany VS Code i Docker, możesz kliknąć w powyższy link, aby rozpocząć. Kliknięcie spowoduje automatyczną instalację rozszrzenia Kontenera Programisty w VS Code (jeżeli wymagany), sklonuje kod źródłowy do kontenera, i przygotuje kontener do użycia.
-
-Więcej informacji w pliku [DEVCONTAINER-PL.md](docs/DEVCONTAINER-PL.md) for more info.
 
 ## Zależności
 
@@ -180,3 +164,4 @@ Upewnij się, że uruchamiasz te polecenia z katalogu głównego repozytorium Ru
 ![image](https://user-images.githubusercontent.com/71636191/113112857-3fbd5d80-923c-11eb-9836-768325faf906.png)
 
 ![image](https://user-images.githubusercontent.com/71636191/135385039-38fdbd72-379a-422d-b97f-33df71fb1cec.png)
+

@@ -11,8 +11,17 @@ import '../../common.dart';
 import '../../common/widgets/dialog.dart';
 
 class FileManagerPage extends StatefulWidget {
-  FileManagerPage({Key? key, required this.id}) : super(key: key);
+  FileManagerPage(
+      {Key? key,
+      required this.id,
+      this.password,
+      this.isSharedPassword,
+      this.forceRelay})
+      : super(key: key);
   final String id;
+  final String? password;
+  final bool? isSharedPassword;
+  final bool? forceRelay;
 
   @override
   State<StatefulWidget> createState() => _FileManagerPageState();
@@ -67,7 +76,11 @@ class _FileManagerPageState extends State<FileManagerPage> {
   @override
   void initState() {
     super.initState();
-    gFFI.start(widget.id, isFileTransfer: true);
+    gFFI.start(widget.id,
+        isFileTransfer: true,
+        password: widget.password,
+        isSharedPassword: widget.isSharedPassword,
+        forceRelay: widget.forceRelay);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       gFFI.dialogManager
           .showLoading(translate('Connecting...'), onCancel: closeConnection);
@@ -83,6 +96,7 @@ class _FileManagerPageState extends State<FileManagerPage> {
       gFFI.dialogManager.dismissAll();
       WakelockPlus.disable();
     });
+    model.jobController.clear();
     super.dispose();
   }
 
@@ -103,8 +117,7 @@ class _FileManagerPageState extends State<FileManagerPage> {
           leading: Row(children: [
             IconButton(
                 icon: Icon(Icons.close),
-                onPressed: () =>
-                    clientClose(gFFI.sessionId, gFFI.dialogManager)),
+                onPressed: () => clientClose(gFFI.sessionId, gFFI)),
           ]),
           centerTitle: true,
           title: ToggleSwitch(
@@ -197,36 +210,54 @@ class _FileManagerPageState extends State<FileManagerPage> {
                     setState(() {});
                   } else if (v == "folder") {
                     final name = TextEditingController();
-                    gFFI.dialogManager
-                        .show((setState, close, context) => CustomAlertDialog(
-                                title: Text(translate("Create Folder")),
-                                content: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    TextFormField(
-                                      decoration: InputDecoration(
-                                        labelText: translate(
-                                            "Please enter the folder name"),
-                                      ),
-                                      controller: name,
-                                    ),
-                                  ],
+                    String? errorText;
+                    gFFI.dialogManager.show((setState, close, context) {
+                      name.addListener(() {
+                        if (errorText != null) {
+                          setState(() {
+                            errorText = null;
+                          });
+                        }
+                      });
+                      return CustomAlertDialog(
+                          title: Text(translate("Create Folder")),
+                          content: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              TextFormField(
+                                decoration: InputDecoration(
+                                  labelText:
+                                      translate("Please enter the folder name"),
+                                  errorText: errorText,
                                 ),
-                                actions: [
-                                  dialogButton("Cancel",
-                                      onPressed: () => close(false),
-                                      isOutline: true),
-                                  dialogButton("OK", onPressed: () {
-                                    if (name.value.text.isNotEmpty) {
-                                      currentFileController.createDir(
-                                          PathUtil.join(
-                                              currentDir.path,
-                                              name.value.text,
-                                              currentOptions.isWindows));
-                                      close();
-                                    }
-                                  })
-                                ]));
+                                controller: name,
+                              ).workaroundFreezeLinuxMint(),
+                            ],
+                          ),
+                          actions: [
+                            dialogButton("Cancel",
+                                onPressed: () => close(false), isOutline: true),
+                            dialogButton("OK", onPressed: () {
+                              if (name.value.text.isNotEmpty) {
+                                if (!PathUtil.validName(
+                                    name.value.text,
+                                    currentFileController
+                                        .options.value.isWindows)) {
+                                  setState(() {
+                                    errorText =
+                                        translate("Invalid folder name");
+                                  });
+                                  return;
+                                }
+                                currentFileController.createDir(PathUtil.join(
+                                    currentDir.path,
+                                    name.value.text,
+                                    currentOptions.isWindows));
+                                close();
+                              }
+                            })
+                          ]);
+                    });
                   } else if (v == "hidden") {
                     currentFileController.toggleShowHidden();
                   }
@@ -324,15 +355,21 @@ class _FileManagerPageState extends State<FileManagerPage> {
         return Offstage();
       }
 
-      switch (jobTable.last.state) {
+      // Find the first job that is in progress (the one actually transferring data)
+      // Rust backend processes jobs sequentially, so the first inProgress job is the active one
+      final activeJob = jobTable
+              .firstWhereOrNull((job) => job.state == JobState.inProgress) ??
+          jobTable.last;
+
+      switch (activeJob.state) {
         case JobState.inProgress:
           return BottomSheetBody(
             leading: CircularProgressIndicator(),
             title: translate("Waiting"),
             text:
-                "${translate("Speed")}:  ${readableFileSize(jobTable.last.speed)}/s",
+                "${translate("Speed")}:  ${readableFileSize(activeJob.speed)}/s",
             onCanceled: () {
-              model.jobController.cancelJob(jobTable.last.id);
+              model.jobController.cancelJob(activeJob.id);
               jobTable.clear();
             },
           );
@@ -340,7 +377,7 @@ class _FileManagerPageState extends State<FileManagerPage> {
           return BottomSheetBody(
             leading: Icon(Icons.check),
             title: "${translate("Successful")}!",
-            text: jobTable.last.display(),
+            text: activeJob.display(),
             onCanceled: () => jobTable.clear(),
           );
         case JobState.error:
@@ -397,6 +434,7 @@ class FileManagerView extends StatefulWidget {
 class _FileManagerViewState extends State<FileManagerView> {
   final _listScrollController = ScrollController();
   final _breadCrumbScroller = ScrollController();
+  late final ascending = Rx<bool>(controller.sortAscending);
 
   bool get isLocal => widget.controller.isLocal;
   FileController get controller => widget.controller;
@@ -490,7 +528,15 @@ class _FileManagerViewState extends State<FileManagerView> {
                                   child: Text(translate("Properties")),
                                   value: "properties",
                                   enabled: false,
-                                )
+                                ),
+                                if (!entries[index].isDrive &&
+                                    versionCmp(gFFI.ffiModel.pi.version,
+                                            "1.3.0") >=
+                                        0)
+                                  PopupMenuItem(
+                                    child: Text(translate("Rename")),
+                                    value: "rename",
+                                  )
                               ];
                             },
                             onSelected: (v) {
@@ -502,6 +548,9 @@ class _FileManagerViewState extends State<FileManagerView> {
                                 _selectedItems.clear();
                                 widget.selectMode.toggle(isLocal);
                                 setState(() {});
+                              } else if (v == "rename") {
+                                controller.renameAction(
+                                    entries[index], isLocal);
                               }
                             }),
                 onTap: () {
@@ -597,7 +646,17 @@ class _FileManagerViewState extends State<FileManagerView> {
                             ))
                         .toList();
                   },
-                  onSelected: controller.changeSortStyle),
+                  onSelected: (sortBy) {
+                    // If selecting the same sort option, flip the order
+                    // If selecting a different sort option, use ascending order
+                    if (controller.sortBy.value == sortBy) {
+                      ascending.value = !controller.sortAscending;
+                    } else {
+                      ascending.value = true;
+                    }
+                    controller.changeSortStyle(sortBy,
+                        ascending: ascending.value);
+                  }),
             ],
           )
         ],
@@ -661,6 +720,7 @@ class BottomSheetBody extends StatelessWidget {
 
   @override
   BottomSheet build(BuildContext context) {
+    // ignore: no_leading_underscores_for_local_identifiers
     final _actions = actions ?? [];
     return BottomSheet(
       builder: (BuildContext context) {

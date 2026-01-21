@@ -9,10 +9,10 @@
   <b>Potřebujeme Vaši pomoc s překladem tohoto README, <a href="https://github.com/rustdesk/rustdesk/tree/master/src/lang">uživatelského rozhraní aplikace RustDesk</a> a <a href="https://github.com/rustdesk/doc.rustdesk.com">dokumentace k ní</a> do vašeho jazyka</b>
 </p>
 
-Popovídejte si s námi: [Discord](https://discord.gg/nDceKgxnkV) | [Twitter](https://twitter.com/rustdesk) | [Reddit](https://www.reddit.com/r/rustdesk)
+Popovídejte si s námi: [Discord](https://discord.gg/nDceKgxnkV) | [Twitter](https://twitter.com/rustdesk) | [Reddit](https://www.reddit.com/r/rustdesk) | [YouTube](https://www.youtube.com/@rustdesk)
 
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I2I04VU09)
+[![RustDesk Server Pro](https://img.shields.io/badge/RustDesk%20Server%20Pro-Pokro%C4%8Dil%C3%A9%20Funkce-blue)](https://rustdesk.com/pricing.html)
 
 Zase další software pro přístup k ploše na dálku, naprogramovaný v jazyce Rust. Funguje hned tak, jak je – není třeba žádného nastavování. Svá data máte ve svých rukách, bez obav o zabezpečení. Je možné používat námi poskytovaný propojovací/předávací (relay) server, [vytvořit si svůj vlastní](https://rustdesk.com/server), nebo [si dokonce svůj vlastní naprogramovat](https://github.com/rustdesk/rustdesk-server-demo), budete-li chtít.
 
@@ -21,14 +21,6 @@ Projekt RustDesk vítá přiložení ruky k dílu od každého. Jak začít se d
 [**Jak RustDesk funguje?**](https://github.com/rustdesk/rustdesk/wiki/How-does-RustDesk-work%3F)
 
 [**STAHOVÁNÍ ZKOMPILOVANÝCH APLIKACÍ**](https://github.com/rustdesk/rustdesk/releases)
-
-## Veřejné, zdarma službu nabízející servery
-
-Níže jsou uvedeny servery zdarma k vašemu použití (údaje se mohou v čase měnit). Pokud se nenacházíte v oblastech světa poblíž nich, spojení může být pomalé.
-| umístění | dodavatel | parametry |
-| --------- | ------------- | ------------------ |
-| Germany | Hetzner | 2 vCPU / 4GB RAM |
-| Ukraine (Kyiv) | [dc.volia](https://dc.volia.com) | 2 vCPU / 4 GB RAM |
 
 ## Softwarové součásti, na kterých závisí
 

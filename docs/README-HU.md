@@ -9,9 +9,9 @@
   <b>Kell a segítséged, hogy lefordítsuk ezt a README-t, <a href="https://github.com/rustdesk/rustdesk/tree/master/src/lang">a RustDesk UI-t</a> és a <a href="https://github.com/rustdesk/doc.rustdesk.com">Dokumentációt</a> az anyanyelvedre</b>
 </p>
 
-Beszélgess velünk: [Discord](https://discord.gg/nDceKgxnkV) | [Twitter](https://twitter.com/rustdesk) | [Reddit](https://www.reddit.com/r/rustdesk)
+Beszélgess velünk: [Discord](https://discord.gg/nDceKgxnkV) | [Twitter](https://twitter.com/rustdesk) | [Reddit](https://www.reddit.com/r/rustdesk) | [YouTube](https://www.youtube.com/@rustdesk)
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I2I04VU09)
+[![RustDesk Server Pro](https://img.shields.io/badge/RustDesk%20Server%20Pro-Speci%C3%A1lis%20Funkci%C3%B3k-blue)](https://rustdesk.com/pricing.html)
 
 A RustDesk egy távoli elérésű asztali szoftver, Rust-ban írva. Működik mindenféle konfiguráció nélkül, feltelepítéssel, vagy anélkül. Az adataidat teljesen te kezeled, nincs szükség aggódásra a harmadik felek miatt. Használhatod a RustDesk punblikus randevú/relay szervereit, [hostolhatsz sajátot](https://rustdesk.com/server), vagy akár [írhatsz is egyet](https://github.com/rustdesk/rustdesk-server-demo).
 
@@ -26,14 +26,6 @@ A RustDesk szívesen fogad minden contributiont, támogatást mindenkitől. Lás
 [<img src="https://fdroid.gitlab.io/artwork/badge/get-it-on.png"
     alt="Get it on F-Droid"
     height="80">](https://f-droid.org/en/packages/com.carriez.flutter_hbb)
-
-## Ingyenes publikus szerverek
-
-Ezalatt az üzenet alatt találhatóak azok a publikus szerverek, amelyeket ingyen használhatsz. Ezek a szerverek változhatnak a jövőben, illetve a hálózatuk lehet hogy lassú lehet.
-| Hely | Host | Specifikáció |
-| --------- | ------------- | ------------------ |
-| Germany | Hetzner | 2 vCPU / 4GB RAM |
-| Ukraine (Kyiv) | [dc.volia](https://dc.volia.com) | 2 vCPU / 4GB RAM |
 
 ## Dependencies
 

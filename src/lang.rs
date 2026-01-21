@@ -2,6 +2,8 @@ use hbb_common::regex::Regex;
 use std::ops::Deref;
 
 mod ar;
+mod be;
+mod bg;
 mod ca;
 mod cn;
 mod cs;
@@ -12,8 +14,11 @@ mod en;
 mod eo;
 mod es;
 mod et;
+mod eu;
 mod fa;
 mod fr;
+mod he;
+mod hr;
 mod hu;
 mod id;
 mod it;
@@ -28,6 +33,7 @@ mod pl;
 mod ptbr;
 mod ro;
 mod ru;
+mod sc;
 mod sk;
 mod sl;
 mod sq;
@@ -36,8 +42,11 @@ mod sv;
 mod th;
 mod tr;
 mod tw;
-mod ua;
-mod vn;
+mod uk;
+mod vi;
+mod ta;
+mod ge;
+mod fi;
 
 pub const LANGS: &[(&str, &str)] = &[
     ("en", "English"),
@@ -51,7 +60,10 @@ pub const LANGS: &[(&str, &str)] = &[
     ("pt", "Português"),
     ("es", "Español"),
     ("et", "Eesti keel"),
+    ("eu", "Euskara"),
     ("hu", "Magyar"),
+    ("bg", "Български"),
+    ("be", "Беларуская"),
     ("ru", "Русский"),
     ("sk", "Slovenčina"),
     ("id", "Indonesia"),
@@ -59,12 +71,12 @@ pub const LANGS: &[(&str, &str)] = &[
     ("da", "Dansk"),
     ("eo", "Esperanto"),
     ("tr", "Türkçe"),
-    ("vn", "Tiếng Việt"),
+    ("vi", "Tiếng Việt"),
     ("pl", "Polski"),
     ("ja", "日本語"),
     ("ko", "한국어"),
     ("kz", "Қазақ"),
-    ("ua", "Українська"),
+    ("uk", "Українська"),
     ("fa", "فارسی"),
     ("ca", "Català"),
     ("el", "Ελληνικά"),
@@ -77,15 +89,22 @@ pub const LANGS: &[(&str, &str)] = &[
     ("lt", "Lietuvių"),
     ("lv", "Latviešu"),
     ("ar", "العربية"),
+    ("he", "עברית"),
+    ("hr", "Hrvatski"),
+    ("sc", "Sardu"),
+    ("ta", "தமிழ்"),
+    ("ge", "ქართული"),
+    ("fi", "Suomi"),
 ];
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn translate(name: String) -> String {
-    let locale = sys_locale::get_locale().unwrap_or_default().to_lowercase();
+    let locale = sys_locale::get_locale().unwrap_or_default();
     translate_locale(name, &locale)
 }
 
 pub fn translate_locale(name: String, locale: &str) -> String {
+    let locale = locale.to_lowercase();
     let mut lang = hbb_common::config::LocalConfig::get_option("lang").to_lowercase();
     if lang.is_empty() {
         // zh_CN on Linux, zh-Hans-CN on mac, zh_CN_#Hans on Android
@@ -117,6 +136,7 @@ pub fn translate_locale(name: String, locale: &str) -> String {
         "nl" => nl::T.deref(),
         "es" => es::T.deref(),
         "et" => et::T.deref(),
+        "eu" => eu::T.deref(),
         "hu" => hu::T.deref(),
         "ru" => ru::T.deref(),
         "eo" => eo::T.deref(),
@@ -127,13 +147,14 @@ pub fn translate_locale(name: String, locale: &str) -> String {
         "cs" => cs::T.deref(),
         "da" => da::T.deref(),
         "sk" => sk::T.deref(),
-        "vn" => vn::T.deref(),
+        "vi" => vi::T.deref(),
         "pl" => pl::T.deref(),
         "ja" => ja::T.deref(),
         "ko" => ko::T.deref(),
         "kz" => kz::T.deref(),
-        "ua" => ua::T.deref(),
+        "uk" => uk::T.deref(),
         "fa" => fa::T.deref(),
+        "fi" => fi::T.deref(),
         "ca" => ca::T.deref(),
         "el" => el::T.deref(),
         "sv" => sv::T.deref(),
@@ -145,6 +166,13 @@ pub fn translate_locale(name: String, locale: &str) -> String {
         "lt" => lt::T.deref(),
         "lv" => lv::T.deref(),
         "ar" => ar::T.deref(),
+        "bg" => bg::T.deref(),
+        "be" => be::T.deref(),
+        "he" => he::T.deref(),
+        "hr" => hr::T.deref(),
+        "sc" => sc::T.deref(),
+        "ta" => ta::T.deref(),
+        "ge" => ge::T.deref(),
         _ => en::T.deref(),
     };
     let (name, placeholder_value) = extract_placeholder(&name);
@@ -153,17 +181,45 @@ pub fn translate_locale(name: String, locale: &str) -> String {
         if let Some(value) = placeholder_value.as_ref() {
             s = s.replace("{}", &value);
         }
+        if !crate::is_rustdesk() {
+            if s.contains("RustDesk")
+                && !name.starts_with("upgrade_rustdesk_server_pro")
+                && name != "powered_by_me"
+            {
+                let app_name = crate::get_app_name();
+                if !app_name.contains("RustDesk") {
+                    s = s.replace("RustDesk", &app_name);
+                } else {
+                    // https://github.com/rustdesk/rustdesk-server-pro/issues/845
+                    // If app_name contains "RustDesk" (e.g., "RustDesk-Admin"), we need to avoid
+                    // replacing "RustDesk" within the already-substituted app_name, which would
+                    // cause duplication like "RustDesk-Admin" -> "RustDesk-Admin-Admin".
+                    //
+                    // app_name only contains alphanumeric and hyphen.
+                    const PLACEHOLDER: &str = "#A-P-P-N-A-M-E#";
+                    if !s.contains(PLACEHOLDER) {
+                        s = s.replace(&app_name, PLACEHOLDER);
+                        s = s.replace("RustDesk", &app_name);
+                        s = s.replace(PLACEHOLDER, &app_name);
+                    } else {
+                        // It's very unlikely to reach here.
+                        // Skip replacement to avoid incorrect result.
+                    }
+                }
+            }
+        }
         s
     };
     if let Some(v) = m.get(&name as &str) {
-        if v.is_empty() {
-            if lang != "en" {
-                if let Some(v) = en::T.get(&name as &str) {
-                    return replace(v);
-                }
-            }
-        } else {
+        if !v.is_empty() {
             return replace(v);
+        }
+    }
+    if lang != "en" {
+        if let Some(v) = en::T.get(&name as &str) {
+            if !v.is_empty() {
+                return replace(v);
+            }
         }
     }
     replace(&name.as_str())

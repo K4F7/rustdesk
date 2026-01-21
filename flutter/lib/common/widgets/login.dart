@@ -143,11 +143,6 @@ class _WidgetOPState extends State<WidgetOP> {
   String _url = '';
 
   @override
-  void initState() {
-    super.initState();
-  }
-
-  @override
   void dispose() {
     super.dispose();
     _updateTimer?.cancel();
@@ -171,10 +166,13 @@ class _WidgetOPState extends State<WidgetOP> {
       final String stateMsg = resultMap['state_msg'];
       String failedMsg = resultMap['failed_msg'];
       final String? url = resultMap['url'];
+      final bool urlLaunched = (resultMap['url_launched'] as bool?) ?? false;
       final authBody = resultMap['auth_body'];
       if (_stateMsg != stateMsg || _failedMsg != failedMsg) {
         if (_url.isEmpty && url != null && url.isNotEmpty) {
-          launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+          if (!urlLaunched) {
+            launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+          }
           _url = url;
         }
         if (authBody != null) {
@@ -390,8 +388,7 @@ class LoginWidgetUserPass extends StatelessWidget {
 
 const kAuthReqTypeOidc = 'oidc/';
 
-/// common login dialog for desktop
-/// call this directly
+// call this directly
 Future<bool?> loginDialog() async {
   var username =
       TextEditingController(text: UserModel.getLocalUserInfo()?['name'] ?? '');
@@ -403,6 +400,8 @@ Future<bool?> loginDialog() async {
   String? passwordMsg;
   var isInProgress = false;
   final RxString curOP = ''.obs;
+  // Track hover state for the close icon
+  bool isCloseHovered = false;
 
   final loginOptions = [].obs;
   Future.delayed(Duration.zero, () async {
@@ -456,14 +455,19 @@ Future<bool?> loginDialog() async {
           }
           if (isEmailVerification != null) {
             if (isMobile) {
-              if (close != null) close(false);
-              verificationCodeDialog(resp.user, isEmailVerification);
+              if (close != null) close(null);
+              verificationCodeDialog(
+                  resp.user, resp.secret, isEmailVerification);
             } else {
               setState(() => isInProgress = false);
-              final res =
-                  await verificationCodeDialog(resp.user, isEmailVerification);
+              // Workaround for web, close the dialog first, then show the verification code dialog.
+              // Otherwise, the text field will keep selecting the text and we can't input the code.
+              // Not sure why this happens.
+              if (isWeb && close != null) close(null);
+              final res = await verificationCodeDialog(
+                  resp.user, resp.secret, isEmailVerification);
               if (res == true) {
-                if (close != null) close(false);
+                if (!isWeb && close != null) close(false);
                 return;
               }
             }
@@ -555,21 +559,27 @@ Future<bool?> loginDialog() async {
         Text(
           translate('Login'),
         ).marginOnly(top: MyTheme.dialogPadding),
-        InkWell(
-          child: Icon(
-            Icons.close,
-            size: 25,
-            // No need to handle the branch of null.
-            // Because we can ensure the color is not null when debug.
-            color: Theme.of(context)
-                .textTheme
-                .titleLarge
-                ?.color
-                ?.withOpacity(0.55),
+        MouseRegion(
+          onEnter: (_) => setState(() => isCloseHovered = true),
+          onExit: (_) => setState(() => isCloseHovered = false),
+          child: InkWell(
+            child: Icon(
+              Icons.close,
+              size: 25,
+              // No need to handle the branch of null.
+              // Because we can ensure the color is not null when debug.
+              color: isCloseHovered
+                  ? Colors.white
+                  : Theme.of(context)
+                      .textTheme
+                      .titleLarge
+                      ?.color
+                      ?.withOpacity(0.55),
+            ),
+            onTap: onDialogCancel,
+            hoverColor: Colors.red,
+            borderRadius: BorderRadius.circular(5),
           ),
-          onTap: onDialogCancel,
-          hoverColor: Colors.red,
-          borderRadius: BorderRadius.circular(5),
         ).marginOnly(top: 10, right: 15),
       ],
     );
@@ -599,6 +609,7 @@ Future<bool?> loginDialog() async {
         ],
       ),
       onCancel: onDialogCancel,
+      onSubmit: onLogin,
     );
   });
 
@@ -610,38 +621,22 @@ Future<bool?> loginDialog() async {
 }
 
 Future<bool?> verificationCodeDialog(
-    UserPayload? user, bool isEmailVerification) async {
+    UserPayload? user, String? secret, bool isEmailVerification) async {
   var autoLogin = true;
   var isInProgress = false;
   String? errorText;
 
   final code = TextEditingController();
-  final focusNode = FocusNode()..requestFocus();
-  Timer(Duration(milliseconds: 100), () => focusNode..requestFocus());
 
   final res = await gFFI.dialogManager.show<bool>((setState, close, context) {
-    bool validate() {
-      return code.text.length >= 6;
-    }
-
-    code.addListener(() {
-      if (errorText != null) {
-        setState(() => errorText = null);
-      }
-    });
-
     void onVerify() async {
-      if (!validate()) {
-        setState(
-            () => errorText = translate('Too short, at least 6 characters.'));
-        return;
-      }
       setState(() => isInProgress = true);
 
       try {
         final resp = await gFFI.userModel.login(LoginRequest(
             verificationCode: code.text,
             tfaCode: isEmailVerification ? null : code.text,
+            secret: secret,
             username: user?.name,
             id: await bind.mainGetMyId(),
             uuid: await bind.mainGetUuid(),
@@ -670,6 +665,22 @@ Future<bool?> verificationCodeDialog(
       setState(() => isInProgress = false);
     }
 
+    final codeField = isEmailVerification
+        ? DialogEmailCodeField(
+            controller: code,
+            errorText: errorText,
+            readyCallback: onVerify,
+            onChanged: () => errorText = null,
+          )
+        : Dialog2FaField(
+            controller: code,
+            errorText: errorText,
+            readyCallback: onVerify,
+            onChanged: () => errorText = null,
+          );
+
+    getOnSubmit() => codeField.isReady ? onVerify : null;
+
     return CustomAlertDialog(
         title: Text(translate("Verification code")),
         contentBoxConstraints: BoxConstraints(maxWidth: 300),
@@ -682,17 +693,9 @@ Future<bool?> verificationCodeDialog(
                       labelText: "Email", prefixIcon: Icon(Icons.email)),
                   readOnly: true,
                   controller: TextEditingController(text: user?.email),
-                )),
+                ).workaroundFreezeLinuxMint()),
             isEmailVerification ? const SizedBox(height: 8) : const Offstage(),
-            DialogTextField(
-              title:
-                  '${translate(isEmailVerification ? "Verification code" : "2FA code")}:',
-              controller: code,
-              errorText: errorText,
-              focusNode: focusNode,
-              helperText: translate(
-                  isEmailVerification ? 'verification_tip' : '2fa_tip'),
-            ),
+            codeField,
             /*
             CheckboxListTile(
               contentPadding: const EdgeInsets.all(0),
@@ -713,12 +716,17 @@ Future<bool?> verificationCodeDialog(
           ],
         ),
         onCancel: close,
-        onSubmit: onVerify,
+        onSubmit: getOnSubmit(),
         actions: [
           dialogButton("Cancel", onPressed: close, isOutline: true),
-          dialogButton("Verify", onPressed: onVerify),
+          dialogButton("Verify", onPressed: getOnSubmit()),
         ]);
   });
+  // For verification code, desktop update other models in login dialog, mobile need to close login dialog first,
+  // otherwise the soft keyboard will jump out on each key press, so mobile update in verification code dialog.
+  if (isMobile && res == true) {
+    await UserModel.updateOtherModels();
+  }
 
   return res;
 }
