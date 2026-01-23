@@ -202,6 +202,8 @@ const String kOptionShowMobileAction = "showMobileActions";
 // Stored via `bind.mainGetLocalOption` / `bind.mainSetLocalOption`.
 const String kAndroidTwoFingerScrollSensitivity =
     "android-two-finger-scroll-sensitivity";
+const String kAndroidWheelScrollSensitivity =
+    "android-wheel-scroll-sensitivity";
 const String kAndroidRemoteShortcuts = "android-remote-shortcuts";
 const String kAndroidRemoteShortcutsVisible =
     "allow-android-remote-shortcuts-visible";

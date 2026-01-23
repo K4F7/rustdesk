@@ -36,12 +36,13 @@ class _RemoteWheelSliderState extends State<RemoteWheelSlider> {
   bool _thumbMoveLogged = false;
 
   double _getSensitivity() {
-    final raw =
-        bind.mainGetLocalOption(key: kAndroidTwoFingerScrollSensitivity);
-    final parsed = double.tryParse(raw);
+    final raw = bind.mainGetLocalOption(key: kAndroidWheelScrollSensitivity);
+    final parsed = double.tryParse(raw.isEmpty
+        ? bind.mainGetLocalOption(key: kAndroidTwoFingerScrollSensitivity)
+        : raw);
     final v = parsed ?? 1.0;
     if (v.isNaN || v.isInfinite) return 1.0;
-    return v.clamp(0.5, 3.0);
+    return v.clamp(0.01, 5.0);
   }
 
   void _ensureDefaultPosition(Size screenSize) {

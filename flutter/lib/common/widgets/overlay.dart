@@ -320,6 +320,13 @@ class DraggablePositions {
   static const kIOSDraggable = 'draggablePositionIOS';
   static const kRemoteWheelSlider = 'draggablePositionRemoteWheelSlider';
   static const kRemoteToolDock = 'draggablePositionRemoteToolDock';
+  static const kRemoteShortcutsPanel = 'draggablePositionRemoteShortcutsPanel';
+  static const kRemoteToolDockShortcuts =
+      'draggablePositionRemoteToolDockShortcuts';
+  static const kRemoteToolDockKeyboard =
+      'draggablePositionRemoteToolDockKeyboard';
+  static const kRemoteToolDockArrow = 'draggablePositionRemoteToolDockArrow';
+  static const kRemoteShortcutButtonPrefix = 'draggablePositionRemoteShortcut_';
 
   static const kInvalidDraggablePosition = Offset(-999999, -999999);
   final chatWindow = DraggableKeyPosition(kChatWindow);
@@ -327,6 +334,11 @@ class DraggablePositions {
   final iOSDraggable = DraggableKeyPosition(kIOSDraggable);
   final remoteWheelSlider = DraggableKeyPosition(kRemoteWheelSlider);
   final remoteToolDock = DraggableKeyPosition(kRemoteToolDock);
+  final remoteShortcutsPanel = DraggableKeyPosition(kRemoteShortcutsPanel);
+  final remoteToolDockShortcuts =
+      DraggableKeyPosition(kRemoteToolDockShortcuts);
+  final remoteToolDockKeyboard = DraggableKeyPosition(kRemoteToolDockKeyboard);
+  final remoteToolDockArrow = DraggableKeyPosition(kRemoteToolDockArrow);
 
   load() {
     chatWindow.load();
@@ -334,6 +346,10 @@ class DraggablePositions {
     iOSDraggable.load();
     remoteWheelSlider.load();
     remoteToolDock.load();
+    remoteShortcutsPanel.load();
+    remoteToolDockShortcuts.load();
+    remoteToolDockKeyboard.load();
+    remoteToolDockArrow.load();
   }
 }
 

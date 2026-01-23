@@ -562,7 +562,7 @@ class _RawTouchGestureDetectorRegionState
     final parsed = double.tryParse(raw);
     final v = parsed ?? 1.0;
     if (v.isNaN || v.isInfinite) return 1.0;
-    return v.clamp(0.5, 3.0);
+    return v.clamp(0.01, 5.0);
   }
 
   void _twoFingerWheelScrollByDelta(double deltaDy) {
