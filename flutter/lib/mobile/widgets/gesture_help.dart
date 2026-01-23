@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common.dart';
+import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/models/input_model.dart';
 import 'package:flutter_hbb/models/model.dart';
+import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:get/get.dart';
 import 'package:toggle_switch/toggle_switch.dart';
 
@@ -58,11 +60,70 @@ class _GestureHelpState extends State<GestureHelp> {
   late int _selectedIndex;
   late bool _touchMode;
   final VirtualMouseMode _virtualMouseMode;
+  double _twoFingerScrollSensitivity = 1.0;
+  double _wheelScrollSensitivity = 1.0;
 
   _GestureHelpState(bool touchMode, VirtualMouseMode virtualMouseMode)
       : _virtualMouseMode = virtualMouseMode {
     _touchMode = touchMode;
     _selectedIndex = _touchMode ? 1 : 0;
+  }
+
+  static const double _minTwoFingerSensitivity = 0.01;
+  static const double _maxTwoFingerSensitivity = 5.00;
+  static const double _twoFingerSensitivityStep = 0.01;
+
+  double _clampSensitivity(double v) {
+    if (v.isNaN || v.isInfinite) return 1.0;
+    return v.clamp(_minTwoFingerSensitivity, _maxTwoFingerSensitivity);
+  }
+
+  double _roundSensitivity(double v) => (v * 100).roundToDouble() / 100;
+
+  void _loadTwoFingerSensitivity() {
+    final raw =
+        bind.mainGetLocalOption(key: kAndroidTwoFingerScrollSensitivity);
+    final parsed = double.tryParse(raw);
+    setState(() {
+      _twoFingerScrollSensitivity =
+          _roundSensitivity(_clampSensitivity(parsed ?? 1.0));
+    });
+  }
+
+  Future<void> _storeTwoFingerSensitivity(double v) async {
+    final next = _roundSensitivity(_clampSensitivity(v));
+    setState(() => _twoFingerScrollSensitivity = next);
+    await bind.mainSetLocalOption(
+      key: kAndroidTwoFingerScrollSensitivity,
+      value: next.toStringAsFixed(2),
+    );
+  }
+
+  void _loadWheelSensitivity() {
+    final raw = bind.mainGetLocalOption(key: kAndroidWheelScrollSensitivity);
+    final parsed = double.tryParse(raw.isEmpty
+        ? bind.mainGetLocalOption(key: kAndroidTwoFingerScrollSensitivity)
+        : raw);
+    setState(() {
+      _wheelScrollSensitivity =
+          _roundSensitivity(_clampSensitivity(parsed ?? 1.0));
+    });
+  }
+
+  Future<void> _storeWheelSensitivity(double v) async {
+    final next = _roundSensitivity(_clampSensitivity(v));
+    setState(() => _wheelScrollSensitivity = next);
+    await bind.mainSetLocalOption(
+      key: kAndroidWheelScrollSensitivity,
+      value: next.toStringAsFixed(2),
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTwoFingerSensitivity();
+    _loadWheelSensitivity();
   }
 
   /// Helper to exit relative mouse mode when certain conditions are met.
@@ -121,6 +182,116 @@ class _GestureHelpState extends State<GestureHelp> {
                           });
                         },
                       ),
+                      if (_touchMode)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 10.0),
+                          child: SizedBox(
+                            width: 320,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Text('双指灵敏度'),
+                                Row(
+                                  children: [
+                                    IconButton(
+                                      tooltip:
+                                          '-${_twoFingerSensitivityStep.toStringAsFixed(2)}',
+                                      icon: const Icon(Icons.chevron_left),
+                                      onPressed: () =>
+                                          _storeTwoFingerSensitivity(
+                                              _twoFingerScrollSensitivity -
+                                                  _twoFingerSensitivityStep),
+                                    ),
+                                    Expanded(
+                                      child: Slider(
+                                        value: _twoFingerScrollSensitivity,
+                                        min: _minTwoFingerSensitivity,
+                                        max: _maxTwoFingerSensitivity,
+                                        divisions: ((_maxTwoFingerSensitivity -
+                                                    _minTwoFingerSensitivity) /
+                                                _twoFingerSensitivityStep)
+                                            .round(),
+                                        label:
+                                            '${_twoFingerScrollSensitivity.toStringAsFixed(2)}x',
+                                        onChanged: (value) {
+                                          setState(() {
+                                            _twoFingerScrollSensitivity =
+                                                _roundSensitivity(
+                                                    _clampSensitivity(value));
+                                          });
+                                        },
+                                        onChangeEnd: (value) =>
+                                            _storeTwoFingerSensitivity(value),
+                                      ),
+                                    ),
+                                    Text(
+                                      '${_twoFingerScrollSensitivity.toStringAsFixed(2)}x',
+                                      style: const TextStyle(fontSize: 12),
+                                    ),
+                                    IconButton(
+                                      tooltip:
+                                          '+${_twoFingerSensitivityStep.toStringAsFixed(2)}',
+                                      icon: const Icon(Icons.chevron_right),
+                                      onPressed: () =>
+                                          _storeTwoFingerSensitivity(
+                                              _twoFingerScrollSensitivity +
+                                                  _twoFingerSensitivityStep),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                const Text('滚轮灵敏度'),
+                                Row(
+                                  children: [
+                                    IconButton(
+                                      tooltip:
+                                          '-${_twoFingerSensitivityStep.toStringAsFixed(2)}',
+                                      icon: const Icon(Icons.chevron_left),
+                                      onPressed: () => _storeWheelSensitivity(
+                                          _wheelScrollSensitivity -
+                                              _twoFingerSensitivityStep),
+                                    ),
+                                    Expanded(
+                                      child: Slider(
+                                        value: _wheelScrollSensitivity,
+                                        min: _minTwoFingerSensitivity,
+                                        max: _maxTwoFingerSensitivity,
+                                        divisions: ((_maxTwoFingerSensitivity -
+                                                    _minTwoFingerSensitivity) /
+                                                _twoFingerSensitivityStep)
+                                            .round(),
+                                        label:
+                                            '${_wheelScrollSensitivity.toStringAsFixed(2)}x',
+                                        onChanged: (value) {
+                                          setState(() {
+                                            _wheelScrollSensitivity =
+                                                _roundSensitivity(
+                                                    _clampSensitivity(value));
+                                          });
+                                        },
+                                        onChangeEnd: (value) =>
+                                            _storeWheelSensitivity(value),
+                                      ),
+                                    ),
+                                    Text(
+                                      '${_wheelScrollSensitivity.toStringAsFixed(2)}x',
+                                      style: const TextStyle(fontSize: 12),
+                                    ),
+                                    IconButton(
+                                      tooltip:
+                                          '+${_twoFingerSensitivityStep.toStringAsFixed(2)}',
+                                      icon: const Icon(Icons.chevron_right),
+                                      onPressed: () => _storeWheelSensitivity(
+                                          _wheelScrollSensitivity +
+                                              _twoFingerSensitivityStep),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                       Transform.translate(
                         offset: const Offset(-10.0, 0.0),
                         child: Row(
