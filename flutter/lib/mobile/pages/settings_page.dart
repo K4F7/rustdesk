@@ -102,6 +102,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
   var _enableIpv6Punch = false;
   var _isUsingPublicServer = false;
   var _allowAskForNoteAtEndOfConnection = false;
+  var _preventSleepWhileConnected = true;
 
   _SettingsState() {
     _enableAbr = option2bool(
@@ -142,6 +143,8 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
     _enableIpv6Punch = mainGetLocalBoolOptionSync(kOptionEnableIpv6Punch);
     _allowAskForNoteAtEndOfConnection =
         mainGetLocalBoolOptionSync(kOptionAllowAskForNoteAtEndOfConnection);
+    _preventSleepWhileConnected =
+        mainGetLocalBoolOptionSync(kOptionKeepAwakeDuringOutgoingSessions);
     _showTerminalExtraKeys =
         mainGetLocalBoolOptionSync(kOptionEnableShowTerminalExtraKeys);
   }
@@ -904,7 +907,18 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                   _allowAskForNoteAtEndOfConnection = newValue;
                 });
               },
-            )
+            ),
+          if (!incomingOnly)
+            SettingsTile.switchTile(
+              title: Text(translate('keep-awake-during-outgoing-sessions-label')),
+              initialValue: _preventSleepWhileConnected,
+              onToggle: (v) async {
+                await mainSetLocalBoolOption(kOptionKeepAwakeDuringOutgoingSessions, v);
+                setState(() {
+                  _preventSleepWhileConnected = v;
+                });
+              },
+            ),
         ]),
         if (isAndroid)
           SettingsSection(title: Text(translate('Hardware Codec')), tiles: [
