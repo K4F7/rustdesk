@@ -4,7 +4,9 @@ import 'dart:io';
 
 import 'package:bot_toast/bot_toast.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common/widgets/overlay.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_tab_page.dart';
@@ -36,6 +38,7 @@ import 'package:flutter_hbb/plugin/handlers.dart'
 int? kWindowId;
 WindowType? kWindowType;
 late List<String> kBootArgs;
+SemanticsHandle? _debugSemanticsHandle;
 
 Future<void> main(List<String> args) async {
   earlyAssert();
@@ -182,6 +185,9 @@ void runMobileApp() async {
   checkUpdate();
   if (isAndroid) androidChannelInit();
   if (isAndroid) platformFFI.syncAndroidServiceAppDirConfigPath();
+  if (isAndroid && kDebugMode) {
+    _debugSemanticsHandle ??= SemanticsBinding.instance.ensureSemantics();
+  }
   draggablePositions.load();
   await Future.wait([gFFI.abModel.loadCache(), gFFI.groupModel.loadCache()]);
   gFFI.userModel.refreshCurrentUser();
