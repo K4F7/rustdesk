@@ -9,6 +9,8 @@ import 'package:flutter_hbb/models/input_model.dart';
 import 'package:flutter_hbb/models/model.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 
+const double _kRemoteShortcutScale = 0.5;
+
 class RemoteShortcut {
   RemoteShortcut({
     required this.id,
@@ -64,15 +66,26 @@ String formatShortcutKeys(List<String> keys, {required bool isMacPeer}) {
     switch (k) {
       case 'VK_CONTROL':
         return 'Ctrl';
+      case 'RControl':
+        return 'R-Ctrl';
       case 'VK_SHIFT':
         return 'Shift';
+      case 'RShift':
+        return 'R-Shift';
       case 'VK_MENU':
         return 'Alt';
+      case 'RAlt':
+        return 'R-Alt';
       case 'VK_LWIN':
       case 'VK_RWIN':
       case 'Meta':
       case 'RWin':
         return isMacPeer ? 'Cmd' : 'Win';
+      case 'VK_RETURN':
+      case 'VK_ENTER':
+        return 'Enter';
+      case 'VK_CAPITAL':
+        return 'CapsLock';
       default:
         if (k.startsWith('VK_')) return k.substring(3);
         return k;
@@ -83,11 +96,17 @@ String formatShortcutKeys(List<String> keys, {required bool isMacPeer}) {
 }
 
 bool _isCtrlKey(String k) =>
-    k == 'VK_CONTROL' || k == 'Control' || k == 'Ctrl' || k == 'CONTROL';
+    k == 'VK_CONTROL' ||
+    k == 'RControl' ||
+    k == 'Control' ||
+    k == 'Ctrl' ||
+    k == 'CONTROL';
 
-bool _isShiftKey(String k) => k == 'VK_SHIFT' || k == 'Shift' || k == 'SHIFT';
+bool _isShiftKey(String k) =>
+    k == 'VK_SHIFT' || k == 'RShift' || k == 'Shift' || k == 'SHIFT';
 
-bool _isAltKey(String k) => k == 'VK_MENU' || k == 'Alt' || k == 'MENU';
+bool _isAltKey(String k) =>
+    k == 'VK_MENU' || k == 'RAlt' || k == 'Alt' || k == 'MENU';
 
 bool _isCmdKey(String k) =>
     k == 'VK_LWIN' ||
@@ -242,8 +261,8 @@ class _RemoteShortcutsPanelState extends State<RemoteShortcutsPanel> {
     final pi = gFFI.ffiModel.pi;
     final isMacPeer = pi.platform == kPeerPlatformMacOS;
 
-    final btnH = _cmToDp(1.0);
-    final btnW = _cmToDp(2.0);
+    final btnH = _cmToDp(1.0) * _kRemoteShortcutScale;
+    final btnW = _cmToDp(2.0) * _kRemoteShortcutScale;
 
     return Positioned.fill(
       child: Semantics(
@@ -261,9 +280,9 @@ class _RemoteShortcutsPanelState extends State<RemoteShortcutsPanel> {
                 index: i,
                 btnW: btnW,
                 btnH: btnH,
-                gap: _gap,
-                defaultRight: _defaultRight,
-                defaultTop: _defaultTop,
+                gap: _gap * _kRemoteShortcutScale,
+                defaultRight: _defaultRight * _kRemoteShortcutScale,
+                defaultTop: _defaultTop * _kRemoteShortcutScale,
                 held: widget.heldShortcutIds.contains(widget.shortcuts[i].id),
                 isMacPeer: isMacPeer,
                 onDelete: widget.onDelete,
@@ -412,21 +431,23 @@ class _RemoteShortcutFloatingButtonState
           child: Container(
             decoration: BoxDecoration(
               color: Colors.grey.withOpacity(0.25),
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(10 * _kRemoteShortcutScale),
               border: Border.all(
-                color: widget.held ? Colors.white : Colors.white38,
+                color: widget.held ? MyTheme.accent : Colors.white38,
                 width: widget.held ? 2 : 1,
               ),
             ),
             alignment: Alignment.center,
-            padding: const EdgeInsets.symmetric(horizontal: 10),
+            padding: EdgeInsets.symmetric(
+              horizontal: 10 * _kRemoteShortcutScale,
+            ),
             child: Text(
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 12,
+                fontSize: 12 * _kRemoteShortcutScale,
               ),
             ),
           ),

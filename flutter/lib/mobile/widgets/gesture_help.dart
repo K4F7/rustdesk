@@ -62,6 +62,7 @@ class _GestureHelpState extends State<GestureHelp> {
   final VirtualMouseMode _virtualMouseMode;
   double _twoFingerScrollSensitivity = 1.0;
   double _wheelScrollSensitivity = 1.0;
+  bool _reverseMouseWheel = false;
 
   _GestureHelpState(bool touchMode, VirtualMouseMode virtualMouseMode)
       : _virtualMouseMode = virtualMouseMode {
@@ -119,11 +120,35 @@ class _GestureHelpState extends State<GestureHelp> {
     );
   }
 
+  void _loadReverseMouseWheel() {
+    var optionValue = '';
+    final sessionId = widget.inputModel?.sessionId;
+    if (sessionId != null) {
+      optionValue =
+          bind.sessionGetReverseMouseWheelSync(sessionId: sessionId) ?? '';
+    }
+    if (optionValue.isEmpty) {
+      optionValue = bind.mainGetUserDefaultOption(key: kKeyReverseMouseWheel);
+    }
+    setState(() => _reverseMouseWheel = optionValue == 'Y');
+  }
+
+  Future<void> _storeReverseMouseWheel(bool value) async {
+    setState(() => _reverseMouseWheel = value);
+    final v = value ? 'Y' : 'N';
+    await bind.mainSetUserDefaultOption(key: kKeyReverseMouseWheel, value: v);
+    final sessionId = widget.inputModel?.sessionId;
+    if (sessionId != null) {
+      await bind.sessionSetReverseMouseWheel(sessionId: sessionId, value: v);
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     _loadTwoFingerSensitivity();
     _loadWheelSensitivity();
+    _loadReverseMouseWheel();
   }
 
   /// Helper to exit relative mouse mode when certain conditions are met.
@@ -287,6 +312,37 @@ class _GestureHelpState extends State<GestureHelp> {
                                               _twoFingerSensitivityStep),
                                     ),
                                   ],
+                                ),
+                                Transform.translate(
+                                  offset: const Offset(-10.0, 0.0),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Checkbox(
+                                        value: _reverseMouseWheel,
+                                        onChanged: (widget.inputModel != null &&
+                                                widget
+                                                    .inputModel!.keyboardPerm &&
+                                                !widget.inputModel!.isViewOnly)
+                                            ? (value) {
+                                                if (value == null) return;
+                                                _storeReverseMouseWheel(value);
+                                              }
+                                            : null,
+                                      ),
+                                      InkWell(
+                                        onTap: (widget.inputModel != null &&
+                                                widget
+                                                    .inputModel!.keyboardPerm &&
+                                                !widget.inputModel!.isViewOnly)
+                                            ? () => _storeReverseMouseWheel(
+                                                !_reverseMouseWheel)
+                                            : null,
+                                        child: Text(
+                                            translate('Reverse mouse wheel')),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ],
                             ),
