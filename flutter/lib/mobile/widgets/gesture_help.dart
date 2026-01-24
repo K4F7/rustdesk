@@ -37,37 +37,49 @@ class GestureIcons {
 }
 
 typedef OnTouchModeChange = void Function(bool);
+typedef OnCanvasEditModeChange = void Function(bool);
 
 class GestureHelp extends StatefulWidget {
   GestureHelp(
       {Key? key,
       required this.touchMode,
       required this.onTouchModeChange,
+      required this.canvasEditMode,
+      required this.onCanvasEditModeChange,
       required this.virtualMouseMode,
       this.inputModel})
       : super(key: key);
   final bool touchMode;
   final OnTouchModeChange onTouchModeChange;
+  final bool canvasEditMode;
+  final OnCanvasEditModeChange onCanvasEditModeChange;
   final VirtualMouseMode virtualMouseMode;
   final InputModel? inputModel;
 
   @override
   State<StatefulWidget> createState() =>
-      _GestureHelpState(touchMode, virtualMouseMode);
+      _GestureHelpState(touchMode, canvasEditMode, virtualMouseMode);
 }
 
 class _GestureHelpState extends State<GestureHelp> {
   late int _selectedIndex;
   late bool _touchMode;
+  late bool _canvasEditMode;
   final VirtualMouseMode _virtualMouseMode;
   double _twoFingerScrollSensitivity = 1.0;
   double _wheelScrollSensitivity = 1.0;
   bool _reverseMouseWheel = false;
 
-  _GestureHelpState(bool touchMode, VirtualMouseMode virtualMouseMode)
+  _GestureHelpState(
+      bool touchMode, bool canvasEditMode, VirtualMouseMode virtualMouseMode)
       : _virtualMouseMode = virtualMouseMode {
     _touchMode = touchMode;
-    _selectedIndex = _touchMode ? 1 : 0;
+    _canvasEditMode = canvasEditMode;
+    if (_canvasEditMode) {
+      _selectedIndex = 2;
+    } else {
+      _selectedIndex = _touchMode ? 1 : 0;
+    }
   }
 
   static const double _minTwoFingerSensitivity = 0.01;
@@ -186,28 +198,41 @@ class _GestureHelpState extends State<GestureHelp> {
                         inactiveFgColor: Colors.white60,
                         activeBgColor: [MyTheme.accent],
                         inactiveBgColor: Theme.of(context).hintColor,
-                        totalSwitches: 2,
+                        totalSwitches: 3,
                         minWidth: 150,
                         fontSize: 15,
                         iconSize: 18,
                         labels: [
                           translate("Mouse mode"),
-                          translate("Touch mode")
+                          translate("Touch mode"),
+                          translate("Canvas edit mode"),
                         ],
-                        icons: [Icons.mouse, Icons.touch_app],
+                        icons: [Icons.mouse, Icons.touch_app, Icons.crop_free],
                         onToggle: (index) {
                           setState(() {
                             if (_selectedIndex != index) {
                               _selectedIndex = index ?? 0;
-                              _touchMode = index == 0 ? false : true;
-                              widget.onTouchModeChange(_touchMode);
-                              // Exit relative mouse mode when switching to touch mode
-                              _exitRelativeMouseModeIf(_touchMode);
+                              if (_selectedIndex == 2) {
+                                _canvasEditMode = true;
+                                widget.onCanvasEditModeChange(true);
+                                // Exit relative mouse mode when entering canvas edit mode
+                                _exitRelativeMouseModeIf(true);
+                              } else {
+                                _canvasEditMode = false;
+                                widget.onCanvasEditModeChange(false);
+                                final nextTouchMode = _selectedIndex == 1;
+                                if (_touchMode != nextTouchMode) {
+                                  _touchMode = nextTouchMode;
+                                  widget.onTouchModeChange(_touchMode);
+                                  // Exit relative mouse mode when switching to touch mode
+                                  _exitRelativeMouseModeIf(_touchMode);
+                                }
+                              }
                             }
                           });
                         },
                       ),
-                      if (_touchMode)
+                      if (_touchMode && !_canvasEditMode)
                         Padding(
                           padding: const EdgeInsets.only(top: 10.0),
                           child: SizedBox(
@@ -377,7 +402,9 @@ class _GestureHelpState extends State<GestureHelp> {
                           ],
                         ),
                       ),
-                      if (_touchMode && _virtualMouseMode.showVirtualMouse)
+                      if (_touchMode &&
+                          !_canvasEditMode &&
+                          _virtualMouseMode.showVirtualMouse)
                         Padding(
                           // Indent "Virtual mouse size"
                           padding: const EdgeInsets.only(left: 24.0),
@@ -427,7 +454,9 @@ class _GestureHelpState extends State<GestureHelp> {
                             ),
                           ),
                         ),
-                      if (!_touchMode && _virtualMouseMode.showVirtualMouse)
+                      if (!_touchMode &&
+                          !_canvasEditMode &&
+                          _virtualMouseMode.showVirtualMouse)
                         Transform.translate(
                           offset: const Offset(-10.0, -12.0),
                           child: Padding(
@@ -468,6 +497,7 @@ class _GestureHelpState extends State<GestureHelp> {
                         ),
                       // Relative mouse mode option - only visible when joystick is shown
                       if (!_touchMode &&
+                          !_canvasEditMode &&
                           _virtualMouseMode.showVirtualMouse &&
                           _virtualMouseMode.showVirtualJoystick &&
                           widget.inputModel != null)
@@ -506,7 +536,20 @@ class _GestureHelpState extends State<GestureHelp> {
                     child: Wrap(
                   spacing: space,
                   runSpacing: 2 * space,
-                  children: _touchMode
+                  children: _canvasEditMode
+                      ? [
+                          GestureInfo(
+                              width,
+                              GestureIcons.iconGestureFDrag,
+                              translate("One-Finger Move"),
+                              translate("Canvas Move")),
+                          GestureInfo(
+                              width,
+                              GestureIcons.iconGesturePinch,
+                              translate("Pinch to Zoom"),
+                              translate("Canvas Zoom")),
+                        ]
+                      : _touchMode
                       ? [
                           GestureInfo(
                               width,

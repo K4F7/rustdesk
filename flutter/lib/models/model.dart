@@ -117,6 +117,7 @@ class FfiModel with ChangeNotifier {
   bool? _secure;
   bool? _direct;
   bool _touchMode = false;
+  bool _canvasEditMode = false;
   late VirtualMouseMode virtualMouseMode;
   Timer? _timer;
   var _reconnects = 1;
@@ -156,6 +157,8 @@ class FfiModel with ChangeNotifier {
   bool get inputBlocked => _inputBlocked;
 
   bool get touchMode => _touchMode;
+
+  bool get canvasEditMode => _canvasEditMode;
 
   bool get isPeerAndroid => _pi.platform == kPeerPlatformAndroid;
   bool get isPeerMobile => isPeerAndroid;
@@ -209,6 +212,20 @@ class FfiModel with ChangeNotifier {
   toggleTouchMode() {
     if (!isPeerAndroid) {
       _touchMode = !_touchMode;
+      notifyListeners();
+    }
+  }
+
+  setTouchMode(bool v) {
+    if (!isPeerAndroid && _touchMode != v) {
+      _touchMode = v;
+      notifyListeners();
+    }
+  }
+
+  setCanvasEditMode(bool v) {
+    if (_canvasEditMode != v) {
+      _canvasEditMode = v;
       notifyListeners();
     }
   }
@@ -1335,6 +1352,7 @@ class FfiModel with ChangeNotifier {
         _touchMode = optSession != '';
       }
     }
+    _canvasEditMode = bind.mainGetLocalOption(key: kOptionCanvasEditMode) == 'Y';
     if (isMobile) {
       virtualMouseMode.loadOptions();
     }

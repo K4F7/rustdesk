@@ -833,9 +833,11 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                                   onPressed: openKeyboard),
                               IconButton(
                                 color: Colors.white,
-                                icon: Icon(gFFI.ffiModel.touchMode
-                                    ? Icons.touch_app
-                                    : Icons.mouse),
+                                icon: Icon(gFFI.ffiModel.canvasEditMode
+                                    ? Icons.crop_free
+                                    : (gFFI.ffiModel.touchMode
+                                        ? Icons.touch_app
+                                        : Icons.mouse)),
                                 onPressed: () => setState(
                                     () => _showGestureHelp = !_showGestureHelp),
                               ),
@@ -1211,9 +1213,15 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
             child: GestureHelp(
               touchMode: gFFI.ffiModel.touchMode,
               onTouchModeChange: (t) {
-                gFFI.ffiModel.toggleTouchMode();
-                final v = gFFI.ffiModel.touchMode ? 'Y' : 'N';
+                gFFI.ffiModel.setTouchMode(t);
+                final v = t ? 'Y' : 'N';
                 bind.mainSetLocalOption(key: kOptionTouchMode, value: v);
+              },
+              canvasEditMode: gFFI.ffiModel.canvasEditMode,
+              onCanvasEditModeChange: (v) {
+                gFFI.ffiModel.setCanvasEditMode(v);
+                bind.mainSetLocalOption(
+                    key: kOptionCanvasEditMode, value: v ? 'Y' : 'N');
               },
               virtualMouseMode: gFFI.ffiModel.virtualMouseMode,
               inputModel: gFFI.inputModel,
