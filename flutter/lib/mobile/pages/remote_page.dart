@@ -401,10 +401,14 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     final isMacPeer = pi.platform == kPeerPlatformMacOS;
 
     String name = '';
-    bool ctrl = true;
-    bool shift = false;
-    bool alt = false;
+    bool ctrlL = true;
+    bool ctrlR = false;
+    bool shiftL = false;
+    bool shiftR = false;
+    bool altL = false;
+    bool altR = false;
     bool win = false;
+    const String noneMainKey = '';
     String mainKey = 'VK_C';
     final nameFocusNode = FocusNode();
     var requestedNameFocus = false;
@@ -413,6 +417,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     gFFI.invokeMethod("enable_soft_keyboard", true);
 
     const mainKeyOptions = <String>[
+      noneMainKey,
       'VK_A',
       'VK_B',
       'VK_C',
@@ -463,6 +468,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       'VK_UP',
       'VK_DOWN',
       'VK_RIGHT',
+      'VK_CAPITAL',
       'VK_RETURN',
       'VK_SPACE',
       'VK_BACK',
@@ -470,11 +476,14 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
 
     List<String> toKeys() {
       final keys = <String>[];
-      if (ctrl) keys.add('VK_CONTROL');
-      if (shift) keys.add('VK_SHIFT');
-      if (alt) keys.add('VK_MENU');
+      if (ctrlL) keys.add('VK_CONTROL');
+      if (ctrlR) keys.add('RControl');
+      if (shiftL) keys.add('VK_SHIFT');
+      if (shiftR) keys.add('RShift');
+      if (altL) keys.add('VK_MENU');
+      if (altR) keys.add('RAlt');
       if (win) keys.add('VK_LWIN');
-      keys.add(mainKey);
+      if (mainKey != noneMainKey) keys.add(mainKey);
       return keys;
     }
 
@@ -516,25 +525,67 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                         Semantics(
                           label: 'u2_remote_add_shortcut_ctrl',
                           child: FilterChip(
-                            selected: ctrl,
+                            selected: ctrlL,
                             label: const Text('Ctrl'),
-                            onSelected: (v) => setLocal(() => ctrl = v),
+                            onSelected: (v) => setLocal(() {
+                              ctrlL = v;
+                              if (v) ctrlR = false;
+                            }),
+                          ),
+                        ),
+                        Semantics(
+                          label: 'u2_remote_add_shortcut_rctrl',
+                          child: FilterChip(
+                            selected: ctrlR,
+                            label: const Text('R-Ctrl'),
+                            onSelected: (v) => setLocal(() {
+                              ctrlR = v;
+                              if (v) ctrlL = false;
+                            }),
                           ),
                         ),
                         Semantics(
                           label: 'u2_remote_add_shortcut_shift',
                           child: FilterChip(
-                            selected: shift,
+                            selected: shiftL,
                             label: const Text('Shift'),
-                            onSelected: (v) => setLocal(() => shift = v),
+                            onSelected: (v) => setLocal(() {
+                              shiftL = v;
+                              if (v) shiftR = false;
+                            }),
+                          ),
+                        ),
+                        Semantics(
+                          label: 'u2_remote_add_shortcut_rshift',
+                          child: FilterChip(
+                            selected: shiftR,
+                            label: const Text('R-Shift'),
+                            onSelected: (v) => setLocal(() {
+                              shiftR = v;
+                              if (v) shiftL = false;
+                            }),
                           ),
                         ),
                         Semantics(
                           label: 'u2_remote_add_shortcut_alt',
                           child: FilterChip(
-                            selected: alt,
+                            selected: altL,
                             label: const Text('Alt'),
-                            onSelected: (v) => setLocal(() => alt = v),
+                            onSelected: (v) => setLocal(() {
+                              altL = v;
+                              if (v) altR = false;
+                            }),
+                          ),
+                        ),
+                        Semantics(
+                          label: 'u2_remote_add_shortcut_ralt',
+                          child: FilterChip(
+                            selected: altR,
+                            label: const Text('R-Alt'),
+                            onSelected: (v) => setLocal(() {
+                              altR = v;
+                              if (v) altL = false;
+                            }),
                           ),
                         ),
                         Semantics(
@@ -560,8 +611,10 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                                   DropdownMenuItem(
                                     value: k,
                                     child: Text(
-                                      formatShortcutKeys([k],
-                                          isMacPeer: isMacPeer),
+                                      k == noneMainKey
+                                          ? translate('None')
+                                          : formatShortcutKeys([k],
+                                              isMacPeer: isMacPeer),
                                     ),
                                   ),
                               ],

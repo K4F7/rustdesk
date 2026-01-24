@@ -66,15 +66,26 @@ String formatShortcutKeys(List<String> keys, {required bool isMacPeer}) {
     switch (k) {
       case 'VK_CONTROL':
         return 'Ctrl';
+      case 'RControl':
+        return 'R-Ctrl';
       case 'VK_SHIFT':
         return 'Shift';
+      case 'RShift':
+        return 'R-Shift';
       case 'VK_MENU':
         return 'Alt';
+      case 'RAlt':
+        return 'R-Alt';
       case 'VK_LWIN':
       case 'VK_RWIN':
       case 'Meta':
       case 'RWin':
         return isMacPeer ? 'Cmd' : 'Win';
+      case 'VK_RETURN':
+      case 'VK_ENTER':
+        return 'Enter';
+      case 'VK_CAPITAL':
+        return 'CapsLock';
       default:
         if (k.startsWith('VK_')) return k.substring(3);
         return k;
@@ -85,11 +96,17 @@ String formatShortcutKeys(List<String> keys, {required bool isMacPeer}) {
 }
 
 bool _isCtrlKey(String k) =>
-    k == 'VK_CONTROL' || k == 'Control' || k == 'Ctrl' || k == 'CONTROL';
+    k == 'VK_CONTROL' ||
+    k == 'RControl' ||
+    k == 'Control' ||
+    k == 'Ctrl' ||
+    k == 'CONTROL';
 
-bool _isShiftKey(String k) => k == 'VK_SHIFT' || k == 'Shift' || k == 'SHIFT';
+bool _isShiftKey(String k) =>
+    k == 'VK_SHIFT' || k == 'RShift' || k == 'Shift' || k == 'SHIFT';
 
-bool _isAltKey(String k) => k == 'VK_MENU' || k == 'Alt' || k == 'MENU';
+bool _isAltKey(String k) =>
+    k == 'VK_MENU' || k == 'RAlt' || k == 'Alt' || k == 'MENU';
 
 bool _isCmdKey(String k) =>
     k == 'VK_LWIN' ||
