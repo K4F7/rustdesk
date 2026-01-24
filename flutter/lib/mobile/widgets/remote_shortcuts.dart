@@ -186,6 +186,8 @@ class RemoteShortcutPanel extends StatelessWidget {
     required this.onClose,
   });
 
+  static const double _kScale = 0.5;
+
   final List<RemoteShortcut> shortcuts;
   final Set<String> heldIds;
   final bool peerIsMac;
@@ -195,15 +197,16 @@ class RemoteShortcutPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = _kScale;
     return Material(
       color: Colors.transparent,
       child: Container(
-        width: 240,
-        constraints: const BoxConstraints(maxHeight: 340),
-        padding: const EdgeInsets.all(10),
+        width: 240 * s,
+        constraints: BoxConstraints(maxHeight: 340 * s),
+        padding: EdgeInsets.all(10 * s),
         decoration: BoxDecoration(
           color: const Color(0xCC000000),
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(12 * s),
           border: Border.all(color: Colors.white24),
         ),
         child: Column(
@@ -216,7 +219,7 @@ class RemoteShortcutPanel extends StatelessWidget {
                     translate('Shortcuts'),
                     style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 13,
+                      fontSize: 13 * _kScale,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -224,21 +227,21 @@ class RemoteShortcutPanel extends StatelessWidget {
                 IconButton(
                   visualDensity: VisualDensity.compact,
                   padding: EdgeInsets.zero,
-                  icon: const Icon(Icons.close, size: 18, color: Colors.white),
+                  icon: Icon(Icons.close, size: 18 * s, color: Colors.white),
                   onPressed: onClose,
                 ),
               ],
             ),
-            const SizedBox(height: 6),
+            SizedBox(height: 6 * s),
             Flexible(
               child: Scrollbar(
                 thumbVisibility: true,
                 child: GridView.builder(
                   shrinkWrap: true,
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 2,
-                    mainAxisSpacing: 8,
-                    crossAxisSpacing: 8,
+                    mainAxisSpacing: 8 * s,
+                    crossAxisSpacing: 8 * s,
                     childAspectRatio: 2.6,
                   ),
                   itemCount: shortcuts.length,
@@ -250,12 +253,12 @@ class RemoteShortcutPanel extends StatelessWidget {
                       onTap: () => onPress(shortcut),
                       onDoubleTap: () => onToggleHold(shortcut),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        padding: EdgeInsets.symmetric(horizontal: 10 * s),
                         decoration: BoxDecoration(
                           color: held ? MyTheme.accent80 : Colors.white10,
-                          borderRadius: BorderRadius.circular(10),
+                          borderRadius: BorderRadius.circular(10 * s),
                           border: Border.all(
-                              color: held ? Colors.white70 : Colors.white24),
+                              color: held ? MyTheme.accent : Colors.white24),
                         ),
                         alignment: Alignment.centerLeft,
                         child: Column(
@@ -268,18 +271,18 @@ class RemoteShortcutPanel extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 color: Colors.white.withOpacity(0.85),
-                                fontSize: 11,
+                                fontSize: 11 * s,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
-                            const SizedBox(height: 2),
+                            SizedBox(height: 2 * s),
                             Text(
                               shortcut.displayCombo(peerIsMac: peerIsMac),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 color: Colors.white,
-                                fontSize: 11,
+                                fontSize: 11 * s,
                               ),
                             ),
                           ],
@@ -290,11 +293,13 @@ class RemoteShortcutPanel extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 6),
+            SizedBox(height: 6 * s),
             Text(
               translate('Tip: tap to send, double tap to hold/release'),
-              style:
-                  TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 11),
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.7),
+                fontSize: 11 * s,
+              ),
             ),
           ],
         ),

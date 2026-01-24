@@ -875,9 +875,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
               right: 10,
               child: QualityMonitor(gFFI.qualityMonitorModel),
             ),
-            KeyHelpTools(
-                keyboardIsVisible: keyboardIsVisible,
-                showGestureHelp: _showGestureHelp),
+            _DisabledKeyHelpTools(keyboardIsVisible: keyboardIsVisible),
             if (showToolDock)
               RemoteToolDock(
                 cursorModel: gFFI.cursorModel,
@@ -1201,6 +1199,20 @@ class KeyHelpTools extends StatefulWidget {
 
   @override
   State<KeyHelpTools> createState() => _KeyHelpToolsState();
+}
+
+class _DisabledKeyHelpTools extends StatelessWidget {
+  const _DisabledKeyHelpTools({required this.keyboardIsVisible});
+
+  final bool keyboardIsVisible;
+
+  @override
+  Widget build(BuildContext context) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      gFFI.cursorModel.keyHelpToolsVisibilityChanged(null, keyboardIsVisible);
+    });
+    return const Offstage();
+  }
 }
 
 class _KeyHelpToolsState extends State<KeyHelpTools> {

@@ -9,6 +9,8 @@ import 'package:flutter_hbb/models/input_model.dart';
 import 'package:flutter_hbb/models/model.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 
+const double _kRemoteShortcutScale = 0.5;
+
 class RemoteShortcut {
   RemoteShortcut({
     required this.id,
@@ -242,8 +244,8 @@ class _RemoteShortcutsPanelState extends State<RemoteShortcutsPanel> {
     final pi = gFFI.ffiModel.pi;
     final isMacPeer = pi.platform == kPeerPlatformMacOS;
 
-    final btnH = _cmToDp(1.0);
-    final btnW = _cmToDp(2.0);
+    final btnH = _cmToDp(1.0) * _kRemoteShortcutScale;
+    final btnW = _cmToDp(2.0) * _kRemoteShortcutScale;
 
     return Positioned.fill(
       child: Semantics(
@@ -261,9 +263,9 @@ class _RemoteShortcutsPanelState extends State<RemoteShortcutsPanel> {
                 index: i,
                 btnW: btnW,
                 btnH: btnH,
-                gap: _gap,
-                defaultRight: _defaultRight,
-                defaultTop: _defaultTop,
+                gap: _gap * _kRemoteShortcutScale,
+                defaultRight: _defaultRight * _kRemoteShortcutScale,
+                defaultTop: _defaultTop * _kRemoteShortcutScale,
                 held: widget.heldShortcutIds.contains(widget.shortcuts[i].id),
                 isMacPeer: isMacPeer,
                 onDelete: widget.onDelete,
@@ -412,21 +414,23 @@ class _RemoteShortcutFloatingButtonState
           child: Container(
             decoration: BoxDecoration(
               color: Colors.grey.withOpacity(0.25),
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(10 * _kRemoteShortcutScale),
               border: Border.all(
-                color: widget.held ? Colors.white : Colors.white38,
+                color: widget.held ? MyTheme.accent : Colors.white38,
                 width: widget.held ? 2 : 1,
               ),
             ),
             alignment: Alignment.center,
-            padding: const EdgeInsets.symmetric(horizontal: 10),
+            padding: EdgeInsets.symmetric(
+              horizontal: 10 * _kRemoteShortcutScale,
+            ),
             child: Text(
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 12,
+                fontSize: 12 * _kRemoteShortcutScale,
               ),
             ),
           ),
