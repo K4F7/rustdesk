@@ -7,6 +7,7 @@ import 'package:flutter/gestures.dart';
 
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/common.dart';
+import 'package:flutter_hbb/common/wheel_reverse.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/models/model.dart';
 import 'package:flutter_hbb/models/input_model.dart';
@@ -700,7 +701,11 @@ class _RawTouchGestureDetectorRegionState
   int _getTwoFingerWheelReverseFactor() {
     final reverseWheel = _getReverseMouseWheel();
     final reverseTwoFinger = _getReverseTwoFingerScroll();
-    return reverseWheel == reverseTwoFinger ? 1 : -1;
+    return wheelStepWithReverseCompensation(
+      step: 1,
+      globalReverse: reverseWheel,
+      sourceReverse: reverseTwoFinger,
+    );
   }
 
   void _twoFingerWheelScrollByDelta(double deltaDy) {
