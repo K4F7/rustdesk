@@ -107,6 +107,8 @@ class _RawTouchGestureDetectorRegionState
   double _twoFingerWheelIntegral = 0.0;
   double _twoFingerZoomLastScale = 1.0;
   double _twoFingerZoomIntegral = 0.0;
+  double _twoFingerModePinchSum = 0.0;
+  double _twoFingerModeScrollSum = 0.0;
 
   int _twoFingerWheelReverseFactor = 1;
 
@@ -672,10 +674,10 @@ class _RawTouchGestureDetectorRegionState
   }
 
   bool _shouldUseTwoFingerRemoteWheelOrZoom() {
-    return isMobile &&
-        handleTouch &&
-        !ffiModel.isPeerMobile &&
-        !widget.isCamera;
+    // Prefer mapping two-finger pinch to remote wheel/zoom (Ctrl+wheel) when we
+    // are controlling a non-mobile peer. This is useful both on mobile touch
+    // mode and on desktop touchscreens.
+    return handleTouch && !ffiModel.isPeerMobile && !widget.isCamera;
   }
 
   bool _getReverseMouseWheel() {
@@ -812,6 +814,8 @@ class _RawTouchGestureDetectorRegionState
       _twoFingerWheelIntegral = 0.0;
       _twoFingerZoomLastScale = 1.0;
       _twoFingerZoomIntegral = 0.0;
+      _twoFingerModePinchSum = 0.0;
+      _twoFingerModeScrollSum = 0.0;
       _twoFingerWheelReverseFactor = _getTwoFingerWheelReverseFactor();
       _twoFingerWheelLockedPos = d.localFocalPoint;
       _twoFingerWheelLastFocal = d.localFocalPoint;
@@ -850,12 +854,22 @@ class _RawTouchGestureDetectorRegionState
       _twoFingerZoomLastScale = d.scale;
 
       if (_twoFingerRemoteMode == _TwoFingerRemoteMode.undecided) {
-        final pinchAmount = (d.scale - 1.0).abs();
-        if (pinchAmount >= 0.03) {
+        _twoFingerModePinchSum += deltaScale.abs();
+        _twoFingerModeScrollSum += delta.distance;
+
+        // Decide intent with a small hysteresis:
+        // - If fingers move in opposite directions (pinch), prefer zoom early.
+        // - Only treat as wheel after more translation to avoid misclassifying
+        //   slow pinches as scroll.
+        if (_twoFingerModePinchSum >= 0.015) {
           _twoFingerRemoteMode = _TwoFingerRemoteMode.zoom;
-        } else if (delta.distance >= 0.7) {
+        } else if (_twoFingerModeScrollSum >= 2.5) {
           _twoFingerRemoteMode = _TwoFingerRemoteMode.wheel;
         }
+      }
+
+      if (_twoFingerRemoteMode == _TwoFingerRemoteMode.undecided) {
+        return;
       }
 
       if (_twoFingerRemoteMode == _TwoFingerRemoteMode.zoom) {
