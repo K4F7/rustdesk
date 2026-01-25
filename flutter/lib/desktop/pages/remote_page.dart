@@ -353,6 +353,16 @@ class _RemotePageState extends State<RemotePage>
       );
 
   Widget buildBody(BuildContext context) {
+    Widget forwardTrackpadAndWheelToRemote(Widget child) {
+      return Listener(
+        onPointerSignal: _ffi.inputModel.onPointerSignalImage,
+        onPointerPanZoomStart: _ffi.inputModel.onPointerPanZoomStart,
+        onPointerPanZoomUpdate: _ffi.inputModel.onPointerPanZoomUpdate,
+        onPointerPanZoomEnd: _ffi.inputModel.onPointerPanZoomEnd,
+        child: child,
+      );
+    }
+
     remoteToolbar(BuildContext context) => RemoteToolbar(
           id: widget.id,
           ffi: _ffi,
@@ -411,13 +421,15 @@ class _RemotePageState extends State<RemotePage>
                         return Obx(() => Offstage(
                               offstage: _ffi.dialogManager
                                   .mobileActionsOverlayVisible.isFalse,
-                              child: Overlay(initialEntries: [
-                                makeMobileActionsOverlayEntry(
-                                  () => _ffi.dialogManager
-                                      .setMobileActionsOverlayVisible(false),
-                                  ffi: _ffi,
-                                )
-                              ]),
+                              child: forwardTrackpadAndWheelToRemote(
+                                Overlay(initialEntries: [
+                                  makeMobileActionsOverlayEntry(
+                                    () => _ffi.dialogManager
+                                        .setMobileActionsOverlayVisible(false),
+                                    ffi: _ffi,
+                                  )
+                                ]),
+                              ),
                             ));
                       }
                     }(),
@@ -428,9 +440,13 @@ class _RemotePageState extends State<RemotePage>
                   ? const Offstage()
                   : _ffi.ffiModel.pi.isSet.isTrue
                       ? Overlay(initialEntries: [
-                          OverlayEntry(builder: remoteToolbar)
+                          OverlayEntry(
+                              builder: (ctx) => forwardTrackpadAndWheelToRemote(
+                                    remoteToolbar(ctx),
+                                  ))
                         ])
-                      : remoteToolbar(context)),
+                      : forwardTrackpadAndWheelToRemote(
+                          remoteToolbar(context))),
               _ffi.ffiModel.pi.isSet.isFalse ? emptyOverlay() : Offstage(),
             ],
           ),
