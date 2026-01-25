@@ -69,6 +69,7 @@ class _GestureHelpState extends State<GestureHelp> {
   double _twoFingerScrollSensitivity = 1.0;
   double _wheelScrollSensitivity = 1.0;
   bool _reverseMouseWheel = false;
+  bool _reverseTwoFingerScroll = false;
 
   _GestureHelpState(
       bool touchMode, bool canvasEditMode, VirtualMouseMode virtualMouseMode)
@@ -155,12 +156,30 @@ class _GestureHelpState extends State<GestureHelp> {
     }
   }
 
+  void _loadReverseTwoFingerScroll() {
+    var optionValue =
+        bind.mainGetUserDefaultOption(key: kKeyReverseTwoFingerScroll);
+    if (optionValue.isEmpty) {
+      // Backward compatible: default to the existing reverse mouse wheel option.
+      optionValue = _reverseMouseWheel ? 'Y' : 'N';
+    }
+    setState(() => _reverseTwoFingerScroll = optionValue == 'Y');
+  }
+
+  Future<void> _storeReverseTwoFingerScroll(bool value) async {
+    setState(() => _reverseTwoFingerScroll = value);
+    final v = value ? 'Y' : 'N';
+    await bind.mainSetUserDefaultOption(
+        key: kKeyReverseTwoFingerScroll, value: v);
+  }
+
   @override
   void initState() {
     super.initState();
     _loadTwoFingerSensitivity();
     _loadWheelSensitivity();
     _loadReverseMouseWheel();
+    _loadReverseTwoFingerScroll();
   }
 
   /// Helper to exit relative mouse mode when certain conditions are met.
@@ -344,6 +363,37 @@ class _GestureHelpState extends State<GestureHelp> {
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
                                       Checkbox(
+                                        value: _reverseTwoFingerScroll,
+                                        onChanged: (widget.inputModel != null &&
+                                                widget
+                                                    .inputModel!.keyboardPerm &&
+                                                !widget.inputModel!.isViewOnly)
+                                            ? (value) {
+                                                if (value == null) return;
+                                                _storeReverseTwoFingerScroll(
+                                                    value);
+                                              }
+                                            : null,
+                                      ),
+                                      InkWell(
+                                        onTap: (widget.inputModel != null &&
+                                                widget
+                                                    .inputModel!.keyboardPerm &&
+                                                !widget.inputModel!.isViewOnly)
+                                            ? () => _storeReverseTwoFingerScroll(
+                                                !_reverseTwoFingerScroll)
+                                            : null,
+                                        child: const Text('双指滚动反向'),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Transform.translate(
+                                  offset: const Offset(-10.0, 0.0),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Checkbox(
                                         value: _reverseMouseWheel,
                                         onChanged: (widget.inputModel != null &&
                                                 widget
@@ -363,8 +413,7 @@ class _GestureHelpState extends State<GestureHelp> {
                                             ? () => _storeReverseMouseWheel(
                                                 !_reverseMouseWheel)
                                             : null,
-                                        child: Text(
-                                            translate('Reverse mouse wheel')),
+                                        child: const Text('鼠标滚轮反向'),
                                       ),
                                     ],
                                   ),

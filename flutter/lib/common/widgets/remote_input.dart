@@ -107,6 +107,8 @@ class _RawTouchGestureDetectorRegionState
   double _twoFingerZoomLastScale = 1.0;
   double _twoFingerZoomIntegral = 0.0;
 
+  int _twoFingerWheelReverseFactor = 1;
+
   int _suppressSingleTouchUntilTs = 0;
 
   bool _leftDragActive = false;
@@ -675,32 +677,60 @@ class _RawTouchGestureDetectorRegionState
         !widget.isCamera;
   }
 
+  bool _getReverseMouseWheel() {
+    var optionValue =
+        bind.sessionGetReverseMouseWheelSync(sessionId: inputModel.sessionId) ??
+            '';
+    if (optionValue.isEmpty) {
+      optionValue = bind.mainGetUserDefaultOption(key: kKeyReverseMouseWheel);
+    }
+    return optionValue == 'Y';
+  }
+
+  bool _getReverseTwoFingerScroll() {
+    var optionValue =
+        bind.mainGetUserDefaultOption(key: kKeyReverseTwoFingerScroll);
+    if (optionValue.isEmpty) {
+      // Backward compatible: default to the existing reverse mouse wheel option.
+      return _getReverseMouseWheel();
+    }
+    return optionValue == 'Y';
+  }
+
+  int _getTwoFingerWheelReverseFactor() {
+    final reverseWheel = _getReverseMouseWheel();
+    final reverseTwoFinger = _getReverseTwoFingerScroll();
+    return reverseWheel == reverseTwoFinger ? 1 : -1;
+  }
+
   void _twoFingerWheelScrollByDelta(double deltaDy) {
     final sensitivity = _getAndroidTwoFingerWheelSensitivity();
     _twoFingerWheelIntegral += (-deltaDy) / 4 * sensitivity;
     while (_twoFingerWheelIntegral >= 1) {
-      inputModel.scroll(1);
+      final step = 1 * _twoFingerWheelReverseFactor;
+      inputModel.scroll(step);
       _twoFingerWheelIntegral -= 1;
       RemoteInputEventLog.add(
         'wheel_v',
         data: {
           'x': _twoFingerWheelLockedPos.dx.round(),
           'y': _twoFingerWheelLockedPos.dy.round(),
-          'dir': 'down',
-          'step': 1,
+          'dir': step > 0 ? 'down' : 'up',
+          'step': step,
         },
       );
     }
     while (_twoFingerWheelIntegral <= -1) {
-      inputModel.scroll(-1);
+      final step = -1 * _twoFingerWheelReverseFactor;
+      inputModel.scroll(step);
       _twoFingerWheelIntegral += 1;
       RemoteInputEventLog.add(
         'wheel_v',
         data: {
           'x': _twoFingerWheelLockedPos.dx.round(),
           'y': _twoFingerWheelLockedPos.dy.round(),
-          'dir': 'up',
-          'step': -1,
+          'dir': step > 0 ? 'down' : 'up',
+          'step': step,
         },
       );
     }
@@ -777,6 +807,7 @@ class _RawTouchGestureDetectorRegionState
       _twoFingerWheelIntegral = 0.0;
       _twoFingerZoomLastScale = 1.0;
       _twoFingerZoomIntegral = 0.0;
+      _twoFingerWheelReverseFactor = _getTwoFingerWheelReverseFactor();
       _twoFingerWheelLockedPos = d.localFocalPoint;
       _twoFingerWheelLastFocal = d.localFocalPoint;
       if (!ffi.cursorModel.isInRemoteRect(_twoFingerWheelLockedPos) ||

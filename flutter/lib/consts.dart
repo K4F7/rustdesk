@@ -240,6 +240,7 @@ const String kKeyUseAllMyDisplaysForTheRemoteSession =
     'use_all_my_displays_for_the_remote_session';
 const String kKeyShowMonitorsToolbar = 'show_monitors_toolbar';
 const String kKeyReverseMouseWheel = "reverse_mouse_wheel";
+const String kKeyReverseTwoFingerScroll = "reverse_two_finger_scroll";
 
 const String kMsgboxTextWaitingForImage = 'Connected, waiting for image...';
 
