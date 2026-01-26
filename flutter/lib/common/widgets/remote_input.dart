@@ -7,6 +7,7 @@ import 'package:flutter/gestures.dart';
 
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/common.dart';
+import 'package:flutter_hbb/common/two_finger_remote_mode.dart';
 import 'package:flutter_hbb/common/wheel_reverse.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/models/model.dart';
@@ -60,12 +61,6 @@ bool isSpecialHoldDragActive = false;
 // Cache the last focal point to calculate deltas in special hold-drag mode.
 Offset _lastSpecialHoldDragFocalPoint = Offset.zero;
 
-enum _TwoFingerRemoteMode {
-  undecided,
-  wheel,
-  zoom,
-}
-
 class RawTouchGestureDetectorRegion extends StatefulWidget {
   final Widget child;
   final FFI ffi;
@@ -101,7 +96,7 @@ class _RawTouchGestureDetectorRegionState
   double _mouseScrollIntegral = 0; // mouse scroll speed controller
   double _scale = 1;
   bool _twoFingerWheelActive = false;
-  _TwoFingerRemoteMode _twoFingerRemoteMode = _TwoFingerRemoteMode.undecided;
+  TwoFingerRemoteMode _twoFingerRemoteMode = TwoFingerRemoteMode.undecided;
   Offset _twoFingerWheelLockedPos = Offset.zero;
   Offset _twoFingerWheelLastFocal = Offset.zero;
   double _twoFingerWheelIntegral = 0.0;
@@ -810,7 +805,7 @@ class _RawTouchGestureDetectorRegionState
     if (_shouldUseTwoFingerRemoteWheelOrZoom()) {
       _suppressSingleTouch();
       _twoFingerWheelActive = true;
-      _twoFingerRemoteMode = _TwoFingerRemoteMode.undecided;
+      _twoFingerRemoteMode = TwoFingerRemoteMode.undecided;
       _twoFingerWheelIntegral = 0.0;
       _twoFingerZoomLastScale = 1.0;
       _twoFingerZoomIntegral = 0.0;
@@ -853,26 +848,26 @@ class _RawTouchGestureDetectorRegionState
       final deltaScale = d.scale - _twoFingerZoomLastScale;
       _twoFingerZoomLastScale = d.scale;
 
-      if (_twoFingerRemoteMode == _TwoFingerRemoteMode.undecided) {
-        _twoFingerModePinchSum += deltaScale.abs();
+      if (_twoFingerRemoteMode == TwoFingerRemoteMode.undecided) {
+        // Some touchscreens report small scale jitter during two-finger scrolling.
+        // Prefer wheel unless the cumulative scale deviation becomes significant.
+        _twoFingerModePinchSum = updateTwoFingerScaleDeviationMax(
+          previousMax: _twoFingerModePinchSum,
+          currentScale: d.scale,
+        );
         _twoFingerModeScrollSum += delta.distance;
 
-        // Decide intent with a small hysteresis:
-        // - If fingers move in opposite directions (pinch), prefer zoom early.
-        // - Only treat as wheel after more translation to avoid misclassifying
-        //   slow pinches as scroll.
-        if (_twoFingerModePinchSum >= 0.015) {
-          _twoFingerRemoteMode = _TwoFingerRemoteMode.zoom;
-        } else if (_twoFingerModeScrollSum >= 2.5) {
-          _twoFingerRemoteMode = _TwoFingerRemoteMode.wheel;
-        }
+        _twoFingerRemoteMode = decideTwoFingerRemoteMode(
+          scaleDeviationMax: _twoFingerModePinchSum,
+          translationDistanceSum: _twoFingerModeScrollSum,
+        );
       }
 
-      if (_twoFingerRemoteMode == _TwoFingerRemoteMode.undecided) {
+      if (_twoFingerRemoteMode == TwoFingerRemoteMode.undecided) {
         return;
       }
 
-      if (_twoFingerRemoteMode == _TwoFingerRemoteMode.zoom) {
+      if (_twoFingerRemoteMode == TwoFingerRemoteMode.zoom) {
         _twoFingerWheelLockedPos = d.localFocalPoint;
         if (!ffi.cursorModel.shouldBlock(
                 _twoFingerWheelLockedPos.dx, _twoFingerWheelLockedPos.dy) &&
@@ -936,7 +931,7 @@ class _RawTouchGestureDetectorRegionState
     if (_shouldUseTwoFingerRemoteWheelOrZoom()) {
       _suppressSingleTouch();
       _twoFingerWheelActive = false;
-      _twoFingerRemoteMode = _TwoFingerRemoteMode.undecided;
+      _twoFingerRemoteMode = TwoFingerRemoteMode.undecided;
       _twoFingerWheelIntegral = 0.0;
       _twoFingerZoomLastScale = 1.0;
       _twoFingerZoomIntegral = 0.0;

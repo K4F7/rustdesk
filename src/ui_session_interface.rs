@@ -1192,14 +1192,12 @@ impl<T: InvokeUiSession> Session<T> {
     }
 
     #[inline]
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     fn is_scroll_reverse_mode(&self) -> bool {
         self.lc.read().unwrap().reverse_mouse_wheel.eq("Y")
     }
 
     #[inline]
     fn get_scroll_xy(&self, xy: (i32, i32)) -> (i32, i32) {
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         if self.is_scroll_reverse_mode() {
             return (-xy.0, -xy.1);
         }

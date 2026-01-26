@@ -59,7 +59,8 @@ class CanvasCoords {
     model.scale = json['scale'];
     model.scrollX = json['scrollX'];
     model.scrollY = json['scrollY'];
-    model.scrollStyle = ScrollStyle.fromJson(json['scrollStyle'], ScrollStyle.scrollauto);
+    model.scrollStyle =
+        ScrollStyle.fromJson(json['scrollStyle'], ScrollStyle.scrollauto);
     model.size = Size(json['size']['w'], json['size']['h']);
     return model;
   }
@@ -873,11 +874,25 @@ class InputModel {
 
   /// Send scroll event with scroll distance [y].
   Future<void> scroll(int y) async {
+    await scrollWheel(y: y);
+  }
+
+  /// Send wheel event with optional horizontal/vertical distance.
+  Future<void> scrollWheel({int x = 0, int y = 0}) async {
     if (isViewCamera) return;
+    // Keep consistent with the server-side wheel handling:
+    // the Rust input service negates `x` internally for wheel/trackpad events.
+    // Define `x > 0` as "scroll right" on the client and compensate here.
+    final sendX = (-x).toString();
     await bind.sessionSendMouse(
-        sessionId: sessionId,
-        msg: json
-            .encode(modify({'id': id, 'type': 'wheel', 'y': y.toString()})));
+      sessionId: sessionId,
+      msg: json.encode(modify({
+        'id': id,
+        'type': 'wheel',
+        'x': sendX,
+        'y': y.toString(),
+      })),
+    );
   }
 
   /// Reset key modifiers to false, including [shift], [ctrl], [alt] and [command].

@@ -9,7 +9,7 @@ import 'package:flutter_hbb/models/input_model.dart';
 import 'package:flutter_hbb/models/model.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 
-const double _kRemoteShortcutScale = 0.5;
+const double _kRemoteShortcutScale = 0.7;
 
 class RemoteShortcut {
   RemoteShortcut({
