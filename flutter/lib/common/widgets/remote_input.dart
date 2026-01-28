@@ -850,14 +850,17 @@ class _RawTouchGestureDetectorRegionState
       _twoFingerCtrlWheelIntegral = 0.0;
       _twoFingerWheelLockedPos = d.localFocalPoint;
       _twoFingerWheelLastFocal = d.localFocalPoint;
-      if (!ffi.cursorModel.isInRemoteRect(_twoFingerWheelLockedPos) ||
-          ffi.cursorModel.shouldBlock(
-              _twoFingerWheelLockedPos.dx, _twoFingerWheelLockedPos.dy)) {
+      if (!ffi.cursorModel.isInRemoteRect(_twoFingerWheelLockedPos)) {
         _twoFingerWheelActive = false;
         return;
       }
-      await ffi.cursorModel
-          .move(_twoFingerWheelLockedPos.dx, _twoFingerWheelLockedPos.dy);
+      // If the start point is blocked by an overlay (e.g. wheel slider), still
+      // allow two-finger scroll to work; just avoid moving the cursor there.
+      if (!ffi.cursorModel.shouldBlock(
+          _twoFingerWheelLockedPos.dx, _twoFingerWheelLockedPos.dy)) {
+        await ffi.cursorModel
+            .move(_twoFingerWheelLockedPos.dx, _twoFingerWheelLockedPos.dy);
+      }
       if (armed) {
         // Anchor Ctrl+wheel to the initial two-finger touch point (A).
         _twoFingerCtrlWheelAnchorPos = _twoFingerWheelLockedPos;
