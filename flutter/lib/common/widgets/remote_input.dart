@@ -780,10 +780,10 @@ class _RawTouchGestureDetectorRegionState
     _twoFingerCtrlWheelIntegral += (-deltaDy) / pixelsPerStep * sensitivity;
     final anchor = _twoFingerCtrlWheelAnchorPos;
     while (_twoFingerCtrlWheelIntegral >= 1) {
+      final step = 1 * reverseFactor;
       final prevCtrl = inputModel.ctrl;
       inputModel.ctrl = true;
       try {
-        final step = 1 * reverseFactor;
         await inputModel.scroll(step);
       } finally {
         inputModel.ctrl = prevCtrl;
@@ -794,16 +794,16 @@ class _RawTouchGestureDetectorRegionState
         data: {
           'x': anchor.dx.round(),
           'y': anchor.dy.round(),
-          'dir': (1 * reverseFactor) > 0 ? 'down' : 'up',
+          'dir': step > 0 ? 'down' : 'up',
           'step': step,
         },
       );
     }
     while (_twoFingerCtrlWheelIntegral <= -1) {
+      final step = -1 * reverseFactor;
       final prevCtrl = inputModel.ctrl;
       inputModel.ctrl = true;
       try {
-        final step = -1 * reverseFactor;
         await inputModel.scroll(step);
       } finally {
         inputModel.ctrl = prevCtrl;
