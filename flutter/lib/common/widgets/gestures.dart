@@ -11,6 +11,65 @@ enum GestureState {
   threeFingerVerticalDrag
 }
 
+class TwoFingerScaleStartDetails {
+  final Offset localFocalPoint;
+  final Offset focalPoint;
+  final int pointerA;
+  final int pointerB;
+  final Offset pointerALocalPosition;
+  final Offset pointerBLocalPosition;
+
+  const TwoFingerScaleStartDetails({
+    required this.localFocalPoint,
+    required this.focalPoint,
+    required this.pointerA,
+    required this.pointerB,
+    required this.pointerALocalPosition,
+    required this.pointerBLocalPosition,
+  });
+}
+
+class TwoFingerScaleUpdateDetails {
+  final Offset localFocalPoint;
+  final Offset focalPoint;
+  final Offset focalPointDelta;
+  final double scale;
+  final int pointerA;
+  final int pointerB;
+  final Offset pointerALocalPosition;
+  final Offset pointerBLocalPosition;
+  final Offset pointerADelta;
+  final Offset pointerBDelta;
+
+  const TwoFingerScaleUpdateDetails({
+    required this.localFocalPoint,
+    required this.focalPoint,
+    required this.focalPointDelta,
+    required this.scale,
+    required this.pointerA,
+    required this.pointerB,
+    required this.pointerALocalPosition,
+    required this.pointerBLocalPosition,
+    required this.pointerADelta,
+    required this.pointerBDelta,
+  });
+}
+
+class TwoFingerScaleEndDetails {
+  final Velocity velocity;
+
+  const TwoFingerScaleEndDetails({
+    required this.velocity,
+  });
+}
+
+typedef TwoFingerScaleStartCallback = void Function(
+    TwoFingerScaleStartDetails details);
+typedef TwoFingerScaleUpdateCallback = void Function(
+    TwoFingerScaleUpdateDetails details);
+typedef TwoFingerScaleEndCallback = void Function(
+    TwoFingerScaleEndDetails details);
+
 class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
   CustomTouchGestureRecognizer({
     Object? debugOwner,
@@ -32,12 +91,46 @@ class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
   GestureScaleUpdateCallback? onTwoFingerScaleUpdate;
   GestureScaleEndCallback? onTwoFingerScaleEnd;
 
+  // twoFingerScale with per-pointer deltas/positions
+  TwoFingerScaleStartCallback? onTwoFingerScaleStartEx;
+  TwoFingerScaleUpdateCallback? onTwoFingerScaleUpdateEx;
+  TwoFingerScaleEndCallback? onTwoFingerScaleEndEx;
+
   // threeFingerVerticalDrag
   GestureDragStartCallback? onThreeFingerVerticalDragStart;
   GestureDragUpdateCallback? onThreeFingerVerticalDragUpdate;
   GestureDragEndCallback? onThreeFingerVerticalDragEnd;
 
   var _currentState = GestureState.none;
+
+  final Map<int, Offset> _pointerLocalPositions = {};
+  final Map<int, Offset> _pointerLocalDeltas = {};
+
+  @override
+  void addPointer(PointerDownEvent event) {
+    super.addPointer(event);
+    _pointerLocalPositions[event.pointer] = event.localPosition;
+    _pointerLocalDeltas[event.pointer] = Offset.zero;
+  }
+
+  @override
+  void handleEvent(PointerEvent event) {
+    super.handleEvent(event);
+    if (event is PointerMoveEvent) {
+      final prev = _pointerLocalPositions[event.pointer];
+      if (prev != null) {
+        _pointerLocalDeltas[event.pointer] = event.localPosition - prev;
+      } else {
+        _pointerLocalDeltas[event.pointer] = Offset.zero;
+      }
+      _pointerLocalPositions[event.pointer] = event.localPosition;
+      return;
+    }
+    if (event is PointerUpEvent || event is PointerCancelEvent) {
+      _pointerLocalPositions.remove(event.pointer);
+      _pointerLocalDeltas.remove(event.pointer);
+    }
+  }
 
   void _init() {
     debugPrint("CustomTouchGestureRecognizer init");
@@ -55,6 +148,11 @@ class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
         if (onTwoFingerScaleStart != null) {
           onTwoFingerScaleStart!(ScaleStartDetails(
               localFocalPoint: d.localFocalPoint, focalPoint: d.focalPoint));
+        }
+        final ex = _buildTwoFingerStartDetails(ScaleStartDetails(
+            localFocalPoint: d.localFocalPoint, focalPoint: d.focalPoint));
+        if (ex != null && onTwoFingerScaleStartEx != null) {
+          onTwoFingerScaleStartEx!(ex);
         }
       } else if (d.pointerCount == 3 &&
           _currentState != GestureState.threeFingerVerticalDrag) {
@@ -75,6 +173,10 @@ class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
           case GestureState.twoFingerScale:
             if (onTwoFingerScaleUpdate != null) {
               onTwoFingerScaleUpdate!(d);
+            }
+            final ex = _buildTwoFingerUpdateDetails(d);
+            if (ex != null && onTwoFingerScaleUpdateEx != null) {
+              onTwoFingerScaleUpdateEx!(ex);
             }
             break;
           case GestureState.threeFingerVerticalDrag:
@@ -102,6 +204,10 @@ class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
           debugPrint("TwoFingerState.scale onEnd");
           if (onTwoFingerScaleEnd != null) {
             onTwoFingerScaleEnd!(d);
+          }
+          if (onTwoFingerScaleEndEx != null) {
+            onTwoFingerScaleEndEx!(
+                TwoFingerScaleEndDetails(velocity: d.velocity));
           }
           if (isSpecialHoldDragActive) {
             // If we are in special drag mode, we need to reset the state.
@@ -131,6 +237,47 @@ class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
 
   DragEndDetails _getDragEndDetails(ScaleEndDetails d) =>
       DragEndDetails(velocity: d.velocity);
+
+  TwoFingerScaleStartDetails? _buildTwoFingerStartDetails(ScaleStartDetails d) {
+    final pointers = _pointerLocalPositions.keys.toList()..sort();
+    if (pointers.length != 2) return null;
+    final a = pointers[0];
+    final b = pointers[1];
+    final aPos = _pointerLocalPositions[a];
+    final bPos = _pointerLocalPositions[b];
+    if (aPos == null || bPos == null) return null;
+    return TwoFingerScaleStartDetails(
+      localFocalPoint: d.localFocalPoint,
+      focalPoint: d.focalPoint,
+      pointerA: a,
+      pointerB: b,
+      pointerALocalPosition: aPos,
+      pointerBLocalPosition: bPos,
+    );
+  }
+
+  TwoFingerScaleUpdateDetails? _buildTwoFingerUpdateDetails(
+      ScaleUpdateDetails d) {
+    final pointers = _pointerLocalPositions.keys.toList()..sort();
+    if (pointers.length != 2) return null;
+    final a = pointers[0];
+    final b = pointers[1];
+    final aPos = _pointerLocalPositions[a];
+    final bPos = _pointerLocalPositions[b];
+    if (aPos == null || bPos == null) return null;
+    return TwoFingerScaleUpdateDetails(
+      localFocalPoint: d.localFocalPoint,
+      focalPoint: d.focalPoint,
+      focalPointDelta: d.focalPointDelta,
+      scale: d.scale,
+      pointerA: a,
+      pointerB: b,
+      pointerALocalPosition: aPos,
+      pointerBLocalPosition: bPos,
+      pointerADelta: _pointerLocalDeltas[a] ?? Offset.zero,
+      pointerBDelta: _pointerLocalDeltas[b] ?? Offset.zero,
+    );
+  }
 }
 
 class HoldTapMoveGestureRecognizer extends GestureRecognizer {

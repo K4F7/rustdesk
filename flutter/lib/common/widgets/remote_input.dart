@@ -7,7 +7,6 @@ import 'package:flutter/gestures.dart';
 
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/common.dart';
-import 'package:flutter_hbb/common/two_finger_remote_mode.dart';
 import 'package:flutter_hbb/common/wheel_reverse.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/models/model.dart';
@@ -96,16 +95,12 @@ class _RawTouchGestureDetectorRegionState
   double _mouseScrollIntegral = 0; // mouse scroll speed controller
   double _scale = 1;
   bool _twoFingerWheelActive = false;
-  TwoFingerRemoteMode _twoFingerRemoteMode = TwoFingerRemoteMode.undecided;
   Offset _twoFingerWheelLockedPos = Offset.zero;
   Offset _twoFingerWheelLastFocal = Offset.zero;
   double _twoFingerWheelIntegral = 0.0;
-  double _twoFingerZoomLastScale = 1.0;
-  double _twoFingerZoomIntegral = 0.0;
-  double _twoFingerModePinchSum = 0.0;
-  double _twoFingerModeScrollSum = 0.0;
-
-  int _twoFingerWheelReverseFactor = 1;
+  bool _twoFingerCtrlWheelActive = false;
+  int? _twoFingerCtrlWheelStationaryPointer;
+  double _twoFingerCtrlWheelIntegral = 0.0;
 
   int _suppressSingleTouchUntilTs = 0;
 
@@ -708,8 +703,11 @@ class _RawTouchGestureDetectorRegionState
   void _twoFingerWheelScrollByDelta(double deltaDy) {
     final sensitivity = _getAndroidTwoFingerWheelSensitivity();
     _twoFingerWheelIntegral += (-deltaDy) / 4 * sensitivity;
+    // Read reverse options dynamically so changes take effect immediately
+    // without requiring the user to lift and re-start a two-finger gesture.
+    final reverseFactor = _getTwoFingerWheelReverseFactor();
     while (_twoFingerWheelIntegral >= 1) {
-      final step = 1 * _twoFingerWheelReverseFactor;
+      final step = 1 * reverseFactor;
       inputModel.scroll(step);
       _twoFingerWheelIntegral -= 1;
       RemoteInputEventLog.add(
@@ -723,7 +721,7 @@ class _RawTouchGestureDetectorRegionState
       );
     }
     while (_twoFingerWheelIntegral <= -1) {
-      final step = -1 * _twoFingerWheelReverseFactor;
+      final step = -1 * reverseFactor;
       inputModel.scroll(step);
       _twoFingerWheelIntegral += 1;
       RemoteInputEventLog.add(
@@ -738,11 +736,12 @@ class _RawTouchGestureDetectorRegionState
     }
   }
 
-  Future<void> _twoFingerZoomByDelta(double deltaScale) async {
+  Future<void> _twoFingerCtrlWheelByDeltaDy(double deltaDy) async {
     final sensitivity = _getAndroidTwoFingerWheelSensitivity();
-    // Empirically tuned: convert continuous scale deltas into discrete wheel steps.
-    _twoFingerZoomIntegral += deltaScale * 35 * sensitivity;
-    while (_twoFingerZoomIntegral >= 1) {
+    // Convert continuous finger motion into discrete wheel steps.
+    const pixelsPerStep = 12.0;
+    _twoFingerCtrlWheelIntegral += (-deltaDy) / pixelsPerStep * sensitivity;
+    while (_twoFingerCtrlWheelIntegral >= 1) {
       final prevCtrl = inputModel.ctrl;
       inputModel.ctrl = true;
       try {
@@ -750,7 +749,7 @@ class _RawTouchGestureDetectorRegionState
       } finally {
         inputModel.ctrl = prevCtrl;
       }
-      _twoFingerZoomIntegral -= 1;
+      _twoFingerCtrlWheelIntegral -= 1;
       RemoteInputEventLog.add(
         'ctrl_wheel_v',
         data: {
@@ -761,7 +760,7 @@ class _RawTouchGestureDetectorRegionState
         },
       );
     }
-    while (_twoFingerZoomIntegral <= -1) {
+    while (_twoFingerCtrlWheelIntegral <= -1) {
       final prevCtrl = inputModel.ctrl;
       inputModel.ctrl = true;
       try {
@@ -769,7 +768,7 @@ class _RawTouchGestureDetectorRegionState
       } finally {
         inputModel.ctrl = prevCtrl;
       }
-      _twoFingerZoomIntegral += 1;
+      _twoFingerCtrlWheelIntegral += 1;
       RemoteInputEventLog.add(
         'ctrl_wheel_v',
         data: {
@@ -782,7 +781,46 @@ class _RawTouchGestureDetectorRegionState
     }
   }
 
-  onTwoFingerScaleStart(ScaleStartDetails d) async {
+  bool _shouldStartTwoFingerCtrlWheel(TwoFingerScaleUpdateDetails d) {
+    const stationaryMaxMove = 1.2;
+    const movingMinMove = 2.0;
+    const verticalDominanceRatio = 1.8;
+
+    final aMove = d.pointerADelta.distance;
+    final bMove = d.pointerBDelta.distance;
+    if (aMove == 0 && bMove == 0) return false;
+
+    final stationaryDelta = aMove <= bMove ? d.pointerADelta : d.pointerBDelta;
+    final movingDelta = aMove <= bMove ? d.pointerBDelta : d.pointerADelta;
+
+    if (stationaryDelta.distance > stationaryMaxMove) return false;
+    if (movingDelta.distance < movingMinMove) return false;
+
+    final dx = movingDelta.dx.abs();
+    final dy = movingDelta.dy.abs();
+    if (dy <= dx * verticalDominanceRatio) return false;
+    return true;
+  }
+
+  int _pickStationaryPointer(TwoFingerScaleUpdateDetails d) {
+    final aMove = d.pointerADelta.distance;
+    final bMove = d.pointerBDelta.distance;
+    return aMove <= bMove ? d.pointerA : d.pointerB;
+  }
+
+  Offset _getPointerLocalPositionFromUpdate(
+      TwoFingerScaleUpdateDetails d, int pointer) {
+    if (pointer == d.pointerA) return d.pointerALocalPosition;
+    return d.pointerBLocalPosition;
+  }
+
+  Offset _getPointerDeltaFromUpdate(
+      TwoFingerScaleUpdateDetails d, int pointer) {
+    if (pointer == d.pointerA) return d.pointerADelta;
+    return d.pointerBDelta;
+  }
+
+  onTwoFingerScaleStartEx(TwoFingerScaleStartDetails d) async {
     _lastTapDownDetails = null;
     if (isNotTouchBasedDevice()) {
       return;
@@ -805,13 +843,10 @@ class _RawTouchGestureDetectorRegionState
     if (_shouldUseTwoFingerRemoteWheelOrZoom()) {
       _suppressSingleTouch();
       _twoFingerWheelActive = true;
-      _twoFingerRemoteMode = TwoFingerRemoteMode.undecided;
       _twoFingerWheelIntegral = 0.0;
-      _twoFingerZoomLastScale = 1.0;
-      _twoFingerZoomIntegral = 0.0;
-      _twoFingerModePinchSum = 0.0;
-      _twoFingerModeScrollSum = 0.0;
-      _twoFingerWheelReverseFactor = _getTwoFingerWheelReverseFactor();
+      _twoFingerCtrlWheelActive = false;
+      _twoFingerCtrlWheelStationaryPointer = null;
+      _twoFingerCtrlWheelIntegral = 0.0;
       _twoFingerWheelLockedPos = d.localFocalPoint;
       _twoFingerWheelLastFocal = d.localFocalPoint;
       if (!ffi.cursorModel.isInRemoteRect(_twoFingerWheelLockedPos) ||
@@ -825,7 +860,7 @@ class _RawTouchGestureDetectorRegionState
     }
   }
 
-  onTwoFingerScaleUpdate(ScaleUpdateDetails d) async {
+  onTwoFingerScaleUpdateEx(TwoFingerScaleUpdateDetails d) async {
     if (isNotTouchBasedDevice()) {
       return;
     }
@@ -845,41 +880,39 @@ class _RawTouchGestureDetectorRegionState
     if (_shouldUseTwoFingerRemoteWheelOrZoom() && _twoFingerWheelActive) {
       final delta = d.localFocalPoint - _twoFingerWheelLastFocal;
       _twoFingerWheelLastFocal = d.localFocalPoint;
-      final deltaScale = d.scale - _twoFingerZoomLastScale;
-      _twoFingerZoomLastScale = d.scale;
 
-      if (_twoFingerRemoteMode == TwoFingerRemoteMode.undecided) {
-        // Some touchscreens report small scale jitter during two-finger scrolling.
-        // Prefer wheel unless the cumulative scale deviation becomes significant.
-        _twoFingerModePinchSum = updateTwoFingerScaleDeviationMax(
-          previousMax: _twoFingerModePinchSum,
-          currentScale: d.scale,
-        );
-        _twoFingerModeScrollSum += delta.distance;
-
-        _twoFingerRemoteMode = decideTwoFingerRemoteMode(
-          scaleDeviationMax: _twoFingerModePinchSum,
-          translationDistanceSum: _twoFingerModeScrollSum,
-        );
+      if (!_twoFingerCtrlWheelActive) {
+        if (_shouldStartTwoFingerCtrlWheel(d)) {
+          _twoFingerCtrlWheelActive = true;
+          _twoFingerCtrlWheelStationaryPointer = _pickStationaryPointer(d);
+          _twoFingerCtrlWheelIntegral = 0.0;
+        } else {
+          _twoFingerWheelScrollByDelta(delta.dy);
+          return;
+        }
       }
 
-      if (_twoFingerRemoteMode == TwoFingerRemoteMode.undecided) {
+      final stationaryPointer = _twoFingerCtrlWheelStationaryPointer;
+      if (stationaryPointer == null) {
+        _twoFingerCtrlWheelActive = false;
+        _twoFingerWheelScrollByDelta(delta.dy);
         return;
       }
 
-      if (_twoFingerRemoteMode == TwoFingerRemoteMode.zoom) {
-        _twoFingerWheelLockedPos = d.localFocalPoint;
-        if (!ffi.cursorModel.shouldBlock(
-                _twoFingerWheelLockedPos.dx, _twoFingerWheelLockedPos.dy) &&
-            ffi.cursorModel.isInRemoteRect(_twoFingerWheelLockedPos)) {
-          await ffi.cursorModel
-              .move(_twoFingerWheelLockedPos.dx, _twoFingerWheelLockedPos.dy);
-          if (deltaScale != 0) {
-            await _twoFingerZoomByDelta(deltaScale);
-          }
+      final movingPointer =
+          stationaryPointer == d.pointerA ? d.pointerB : d.pointerA;
+      final movingDelta = _getPointerDeltaFromUpdate(d, movingPointer);
+      _twoFingerWheelLockedPos =
+          _getPointerLocalPositionFromUpdate(d, stationaryPointer);
+
+      if (!ffi.cursorModel.shouldBlock(
+              _twoFingerWheelLockedPos.dx, _twoFingerWheelLockedPos.dy) &&
+          ffi.cursorModel.isInRemoteRect(_twoFingerWheelLockedPos)) {
+        await ffi.cursorModel
+            .move(_twoFingerWheelLockedPos.dx, _twoFingerWheelLockedPos.dy);
+        if (movingDelta.dy != 0) {
+          await _twoFingerCtrlWheelByDeltaDy(movingDelta.dy);
         }
-      } else {
-        _twoFingerWheelScrollByDelta(delta.dy);
       }
       return;
     }
@@ -918,7 +951,7 @@ class _RawTouchGestureDetectorRegionState
     }
   }
 
-  onTwoFingerScaleEnd(ScaleEndDetails d) async {
+  onTwoFingerScaleEndEx(TwoFingerScaleEndDetails d) async {
     if (isNotTouchBasedDevice()) {
       return;
     }
@@ -931,10 +964,10 @@ class _RawTouchGestureDetectorRegionState
     if (_shouldUseTwoFingerRemoteWheelOrZoom()) {
       _suppressSingleTouch();
       _twoFingerWheelActive = false;
-      _twoFingerRemoteMode = TwoFingerRemoteMode.undecided;
       _twoFingerWheelIntegral = 0.0;
-      _twoFingerZoomLastScale = 1.0;
-      _twoFingerZoomIntegral = 0.0;
+      _twoFingerCtrlWheelActive = false;
+      _twoFingerCtrlWheelStationaryPointer = null;
+      _twoFingerCtrlWheelIntegral = 0.0;
       _scale = 1;
       return;
     }
@@ -1023,9 +1056,9 @@ class _RawTouchGestureDetectorRegionState
         instance
           ..onOneFingerPanUpdate = onOneFingerPanUpdate
           ..onOneFingerPanEnd = onOneFingerPanEnd
-          ..onTwoFingerScaleStart = onTwoFingerScaleStart
-          ..onTwoFingerScaleUpdate = onTwoFingerScaleUpdate
-          ..onTwoFingerScaleEnd = onTwoFingerScaleEnd
+          ..onTwoFingerScaleStartEx = onTwoFingerScaleStartEx
+          ..onTwoFingerScaleUpdateEx = onTwoFingerScaleUpdateEx
+          ..onTwoFingerScaleEndEx = onTwoFingerScaleEndEx
           ..onThreeFingerVerticalDragUpdate = onThreeFingerVerticalDragUpdate;
       }),
     };

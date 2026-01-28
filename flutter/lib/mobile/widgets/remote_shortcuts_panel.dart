@@ -10,6 +10,9 @@ import 'package:flutter_hbb/models/model.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 
 const double _kRemoteShortcutScale = 0.7;
+const double _kRemoteShortcutFontSizeMax = 14;
+const double _kRemoteShortcutFontSizeMin = 11;
+const double _kRemoteShortcutExpandedHeightFactor = 1.35;
 
 class RemoteShortcut {
   RemoteShortcut({
@@ -92,7 +95,10 @@ String formatShortcutKeys(List<String> keys, {required bool isMacPeer}) {
     }
   }
 
-  return keys.map(mapOne).join(' + ');
+  // Add soft wrap opportunities around '+' so long shortcuts look natural when
+  // displayed in a small button (Android remote shortcuts panel).
+  const joiner = ' \u200B+\u200B ';
+  return keys.map(mapOne).join(joiner);
 }
 
 bool _isCtrlKey(String k) =>
@@ -336,19 +342,35 @@ class _RemoteShortcutFloatingButton extends StatefulWidget {
 class _RemoteShortcutFloatingButtonState
     extends State<_RemoteShortcutFloatingButton> {
   Rect? _blockedRect;
+  bool _expandedForTwoLines = false;
+  late double _btnH;
+
+  @override
+  void initState() {
+    super.initState();
+    _btnH = widget.btnH;
+  }
+
+  @override
+  void didUpdateWidget(covariant _RemoteShortcutFloatingButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.btnH != widget.btnH && !_expandedForTwoLines) {
+      _btnH = widget.btnH;
+    }
+  }
 
   void _ensureDefaultPosition(Size screenSize) {
     if (!widget.position.isInvalid()) return;
     final x = (screenSize.width - widget.defaultRight - widget.btnW)
         .clamp(0.0, screenSize.width);
-    final y = (widget.defaultTop + widget.index * (widget.btnH + widget.gap))
+    final y = (widget.defaultTop + widget.index * (_btnH + widget.gap))
         .clamp(0.0, screenSize.height);
     widget.position.update(Offset(x.toDouble(), y.toDouble()));
   }
 
   void _syncBlockedRect() {
     final pos = widget.position.pos;
-    final newRect = Rect.fromLTWH(pos.dx, pos.dy, widget.btnW, widget.btnH);
+    final newRect = Rect.fromLTWH(pos.dx, pos.dy, widget.btnW, _btnH);
     if (_blockedRect != null) {
       widget.cursorModel.removeBlockedRect(_blockedRect!);
     }
@@ -359,8 +381,7 @@ class _RemoteShortcutFloatingButtonState
   void _moveBy(Offset delta, Size screenSize) {
     final pos = widget.position.pos;
     final maxX = (screenSize.width - widget.btnW).clamp(0.0, screenSize.width);
-    final maxY =
-        (screenSize.height - widget.btnH).clamp(0.0, screenSize.height);
+    final maxY = (screenSize.height - _btnH).clamp(0.0, screenSize.height);
     final x = (pos.dx + delta.dx).clamp(0.0, maxX);
     final y = (pos.dy + delta.dy).clamp(0.0, maxY);
     widget.position.update(Offset(x.toDouble(), y.toDouble()));
@@ -394,7 +415,7 @@ class _RemoteShortcutFloatingButtonState
       left: widget.position.pos.dx,
       top: widget.position.pos.dy,
       width: widget.btnW,
-      height: widget.btnH,
+      height: _btnH,
       child: Semantics(
         label: 'u2_remote_shortcut_button',
         button: true,
@@ -441,18 +462,156 @@ class _RemoteShortcutFloatingButtonState
             padding: EdgeInsets.symmetric(
               horizontal: 10 * _kRemoteShortcutScale,
             ),
-            child: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 12 * _kRemoteShortcutScale,
-              ),
+            child: _RemoteShortcutLabel(
+              label: label,
+              onNeedsTwoLines: () {
+                if (_expandedForTwoLines) return;
+                _expandedForTwoLines = true;
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
+                  setState(() {
+                    _btnH = widget.btnH * _kRemoteShortcutExpandedHeightFactor;
+                  });
+                });
+              },
             ),
           ),
         ),
       ),
     );
+  }
+}
+
+class _RemoteShortcutLabel extends StatelessWidget {
+  const _RemoteShortcutLabel({
+    required this.label,
+    required this.onNeedsTwoLines,
+  });
+
+  final String label;
+  final VoidCallback onNeedsTwoLines;
+
+  static bool _fits({
+    required String text,
+    required TextStyle style,
+    required int maxLines,
+    required double maxWidth,
+    required double maxHeight,
+    required TextScaler textScaler,
+  }) {
+    final tp = TextPainter(
+      text: TextSpan(text: text, style: style),
+      maxLines: maxLines,
+      textDirection: TextDirection.ltr,
+      ellipsis: '…',
+      textScaler: textScaler,
+    )..layout(maxWidth: maxWidth);
+    return !tp.didExceedMaxLines && tp.height <= maxHeight + 0.1;
+  }
+
+  static double _fitFontSize({
+    required String text,
+    required TextStyle baseStyle,
+    required int maxLines,
+    required double maxWidth,
+    required double maxHeight,
+    required TextScaler textScaler,
+    required double min,
+    required double max,
+  }) {
+    if (max <= min) return min;
+    if (_fits(
+      text: text,
+      style: baseStyle.copyWith(fontSize: min),
+      maxLines: maxLines,
+      maxWidth: maxWidth,
+      maxHeight: maxHeight,
+      textScaler: textScaler,
+    )) {
+      if (_fits(
+        text: text,
+        style: baseStyle.copyWith(fontSize: max),
+        maxLines: maxLines,
+        maxWidth: maxWidth,
+        maxHeight: maxHeight,
+        textScaler: textScaler,
+      )) {
+        return max;
+      }
+    } else {
+      return min;
+    }
+
+    var lo = min;
+    var hi = max;
+    while ((hi - lo) > 0.1) {
+      final mid = (lo + hi) / 2;
+      final ok = _fits(
+        text: text,
+        style: baseStyle.copyWith(fontSize: mid),
+        maxLines: maxLines,
+        maxWidth: maxWidth,
+        maxHeight: maxHeight,
+        textScaler: textScaler,
+      );
+      if (ok) {
+        lo = mid;
+      } else {
+        hi = mid;
+      }
+    }
+    return lo;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final textScaler = MediaQuery.textScalerOf(context);
+
+    return LayoutBuilder(builder: (context, constraints) {
+      final maxWidth = constraints.maxWidth;
+      final maxHeight = constraints.maxHeight;
+
+      final baseStyle = const TextStyle(
+        color: Colors.white,
+        fontWeight: FontWeight.w500,
+      );
+
+      final singleLineFitsAtMin = _fits(
+        text: label,
+        style: baseStyle.copyWith(fontSize: _kRemoteShortcutFontSizeMin),
+        maxLines: 1,
+        maxWidth: maxWidth,
+        maxHeight: maxHeight,
+        textScaler: textScaler,
+      );
+
+      final useTwoLines = !singleLineFitsAtMin;
+      if (useTwoLines) {
+        onNeedsTwoLines();
+      }
+
+      final maxLines = useTwoLines ? 2 : 1;
+      final fontSize = _fitFontSize(
+        text: label,
+        baseStyle: baseStyle,
+        maxLines: maxLines,
+        maxWidth: maxWidth,
+        maxHeight: maxHeight,
+        textScaler: textScaler,
+        min: _kRemoteShortcutFontSizeMin,
+        max: _kRemoteShortcutFontSizeMax,
+      );
+
+      return Text(
+        label,
+        maxLines: maxLines,
+        overflow: TextOverflow.ellipsis,
+        textAlign: TextAlign.center,
+        style: baseStyle.copyWith(
+          fontSize: fontSize,
+          height: useTwoLines ? 1.1 : null,
+        ),
+      );
+    });
   }
 }
