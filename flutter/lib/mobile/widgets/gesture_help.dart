@@ -421,7 +421,7 @@ class _GestureHelpState extends State<GestureHelp> {
                                             ? () => _storeReverseMouseWheel(
                                                 !_reverseMouseWheel)
                                             : null,
-                                        child: const Text('鼠标滚轮反向'),
+                                        child: const Text('滑轮条反向'),
                                       ),
                                     ],
                                   ),

@@ -49,6 +49,16 @@ class _RemoteWheelSliderState extends State<RemoteWheelSlider> {
     return v.clamp(0.01, 5.0);
   }
 
+  bool _getReverseWheelSlider() {
+    var optionValue = bind.sessionGetReverseMouseWheelSync(
+            sessionId: widget.inputModel.sessionId) ??
+        '';
+    if (optionValue.isEmpty) {
+      optionValue = bind.mainGetUserDefaultOption(key: kKeyReverseMouseWheel);
+    }
+    return optionValue == 'Y';
+  }
+
   void _ensureDefaultPosition(Size screenSize) {
     if (!widget.position.isInvalid()) {
       widget.position.tryAdjust(_currentWidth, _currentHeight, 1);
@@ -102,20 +112,23 @@ class _RemoteWheelSliderState extends State<RemoteWheelSlider> {
   void _scrollByDelta(double delta) {
     final sensitivity = _getSensitivity();
     _scrollIntegral += (-delta) / 4 * sensitivity;
+    final reverseFactor = _getReverseWheelSlider() ? -1 : 1;
     while (_scrollIntegral >= 1) {
-      widget.inputModel.scrollWheel(y: 1);
+      final step = 1 * reverseFactor;
+      widget.inputModel.scrollWheel(y: step);
       _scrollIntegral -= 1;
       RemoteInputEventLog.add(
         'wheel_v',
-        data: {'dir': 'down', 'step': 1},
+        data: {'dir': step > 0 ? 'down' : 'up', 'step': step},
       );
     }
     while (_scrollIntegral <= -1) {
-      widget.inputModel.scrollWheel(y: -1);
+      final step = -1 * reverseFactor;
+      widget.inputModel.scrollWheel(y: step);
       _scrollIntegral += 1;
       RemoteInputEventLog.add(
         'wheel_v',
-        data: {'dir': 'up', 'step': -1},
+        data: {'dir': step > 0 ? 'down' : 'up', 'step': step},
       );
     }
   }

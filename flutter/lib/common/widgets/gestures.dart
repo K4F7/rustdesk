@@ -265,6 +265,12 @@ class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
     final aPos = _pointerLocalPositions[a];
     final bPos = _pointerLocalPositions[b];
     if (aPos == null || bPos == null) return null;
+    final aDelta = _pointerLocalDeltas[a] ?? Offset.zero;
+    final bDelta = _pointerLocalDeltas[b] ?? Offset.zero;
+    // Consume the deltas to ensure the next update sees 0 movement unless there
+    // is a new PointerMoveEvent for that pointer.
+    _pointerLocalDeltas[a] = Offset.zero;
+    _pointerLocalDeltas[b] = Offset.zero;
     return TwoFingerScaleUpdateDetails(
       localFocalPoint: d.localFocalPoint,
       focalPoint: d.focalPoint,
@@ -274,8 +280,8 @@ class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
       pointerB: b,
       pointerALocalPosition: aPos,
       pointerBLocalPosition: bPos,
-      pointerADelta: _pointerLocalDeltas[a] ?? Offset.zero,
-      pointerBDelta: _pointerLocalDeltas[b] ?? Offset.zero,
+      pointerADelta: aDelta,
+      pointerBDelta: bDelta,
     );
   }
 }
