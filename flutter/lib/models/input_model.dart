@@ -336,6 +336,24 @@ class InputModel {
   var alt = false;
   var command = false;
 
+  // Sticky modifiers, used by Android remote shortcuts "hold" mode.
+  //
+  // Rationale: some remote-side implementations and/or input paths rely on the
+  // per-event modifier flags (alt/ctrl/shift/command) more than the OS key-down
+  // state; keeping sticky flags separate avoids fighting with physical-key
+  // tracking.
+  var shortcutStickyShift = false;
+  var shortcutStickyCtrl = false;
+  var shortcutStickyAlt = false;
+  var shortcutStickyCommand = false;
+
+  void resetShortcutStickyModifiers() {
+    shortcutStickyShift = false;
+    shortcutStickyCtrl = false;
+    shortcutStickyAlt = false;
+    shortcutStickyCommand = false;
+  }
+
   final ToReleaseRawKeys toReleaseRawKeys = ToReleaseRawKeys();
   final ToReleaseKeys toReleaseKeys = ToReleaseKeys();
 
@@ -808,15 +826,19 @@ class InputModel {
   void inputKey(String name, {bool? down, bool? press}) {
     if (!keyboardPerm) return;
     if (isViewCamera) return;
+    final effectiveAlt = alt || shortcutStickyAlt;
+    final effectiveCtrl = ctrl || shortcutStickyCtrl;
+    final effectiveShift = shift || shortcutStickyShift;
+    final effectiveCommand = command || shortcutStickyCommand;
     bind.sessionInputKey(
         sessionId: sessionId,
         name: name,
         down: down ?? false,
         press: press ?? true,
-        alt: alt,
-        ctrl: ctrl,
-        shift: shift,
-        command: command);
+        alt: effectiveAlt,
+        ctrl: effectiveCtrl,
+        shift: effectiveShift,
+        command: effectiveCommand);
   }
 
   static Map<String, dynamic> getMouseEventMove() => {
@@ -902,10 +924,14 @@ class InputModel {
 
   /// Modify the given modifier map [evt] based on current modifier key status.
   Map<String, dynamic> modify(Map<String, dynamic> evt) {
-    if (ctrl) evt['ctrl'] = 'true';
-    if (shift) evt['shift'] = 'true';
-    if (alt) evt['alt'] = 'true';
-    if (command) evt['command'] = 'true';
+    final effectiveAlt = alt || shortcutStickyAlt;
+    final effectiveCtrl = ctrl || shortcutStickyCtrl;
+    final effectiveShift = shift || shortcutStickyShift;
+    final effectiveCommand = command || shortcutStickyCommand;
+    if (effectiveCtrl) evt['ctrl'] = 'true';
+    if (effectiveShift) evt['shift'] = 'true';
+    if (effectiveAlt) evt['alt'] = 'true';
+    if (effectiveCommand) evt['command'] = 'true';
     return evt;
   }
 

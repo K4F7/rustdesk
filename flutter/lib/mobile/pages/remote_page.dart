@@ -99,6 +99,49 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     gFFI.dialogManager.loadMobileActionsOverlayVisible();
   }
 
+  bool _isCtrlKey(String k) =>
+      k == 'VK_CONTROL' ||
+      k == 'RControl' ||
+      k == 'Control' ||
+      k == 'Ctrl' ||
+      k == 'CONTROL';
+
+  bool _isShiftKey(String k) =>
+      k == 'VK_SHIFT' || k == 'RShift' || k == 'Shift' || k == 'SHIFT';
+
+  bool _isAltKey(String k) =>
+      k == 'VK_MENU' || k == 'RAlt' || k == 'Alt' || k == 'MENU';
+
+  bool _isCmdKey(String k) =>
+      k == 'VK_LWIN' ||
+      k == 'VK_RWIN' ||
+      k == 'Meta' ||
+      k == 'LWin' ||
+      k == 'RWin' ||
+      k == 'Command' ||
+      k == 'Cmd';
+
+  void _syncHeldShortcutStickyModifiers() {
+    var ctrl = false;
+    var shift = false;
+    var alt = false;
+    var command = false;
+    for (final s in _shortcuts) {
+      if (!_heldShortcutIds.contains(s.id)) continue;
+      for (final k in s.keys) {
+        ctrl = ctrl || _isCtrlKey(k);
+        shift = shift || _isShiftKey(k);
+        alt = alt || _isAltKey(k);
+        command = command || _isCmdKey(k);
+        if (ctrl && shift && alt && command) break;
+      }
+    }
+    inputModel.shortcutStickyCtrl = ctrl;
+    inputModel.shortcutStickyShift = shift;
+    inputModel.shortcutStickyAlt = alt;
+    inputModel.shortcutStickyCommand = command;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -145,6 +188,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   @override
   Future<void> dispose() async {
     WidgetsBinding.instance.removeObserver(this);
+    inputModel.resetShortcutStickyModifiers();
     // https://github.com/flutter/flutter/issues/64935
     super.dispose();
     gFFI.dialogManager.hideMobileActionsOverlay(store: false);
@@ -954,10 +998,21 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                 shortcuts: _shortcuts,
                 heldShortcutIds: _heldShortcutIds,
                 onDelete: (s) async {
+                  final wasHeld = _heldShortcutIds.contains(s.id);
                   setState(() {
                     _shortcuts = _shortcuts.where((e) => e.id != s.id).toList();
                     _heldShortcutIds.remove(s.id);
                   });
+                  _syncHeldShortcutStickyModifiers();
+                  if (wasHeld) {
+                    await setShortcutHold(
+                      gFFI.inputModel,
+                      s.keys,
+                      hold: false,
+                      isMacPeer:
+                          gFFI.ffiModel.pi.platform == kPeerPlatformMacOS,
+                    );
+                  }
                   await RemoteShortcutsStore.save(_shortcuts);
                 },
                 onToggleHold: (s) async {
@@ -969,6 +1024,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                       _heldShortcutIds.add(s.id);
                     }
                   });
+                  _syncHeldShortcutStickyModifiers();
                   await setShortcutHold(
                     gFFI.inputModel,
                     s.keys,
