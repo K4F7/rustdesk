@@ -579,6 +579,7 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
   final Map<int, _TapTracker> _trackers = <int, _TapTracker>{};
   final Set<int> _heldPointers = <int>{};
   bool _didResolve = false;
+  bool _isResetting = false;
 
   @override
   bool isPointerAllowed(PointerDownEvent event) {
@@ -645,10 +646,12 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
       }
     } else if (event is PointerMoveEvent) {
       if (!tracker.isWithinGlobalTolerance(event, kDoubleTapTouchSlop)) {
-        _reject(tracker);
+        // Reject the whole gesture as soon as we detect movement, so that
+        // two-finger scroll/scale can win the arena immediately.
+        _reset();
       }
     } else if (event is PointerCancelEvent) {
-      _reject(tracker);
+      _reset();
     }
   }
 
@@ -657,15 +660,10 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
 
   @override
   void rejectGesture(int pointer) {
-    _TapTracker? tracker = _trackers[pointer];
-    // If tracker isn't in the list, check if this is the first tap tracker
-    if (tracker == null && _firstTap != null && _firstTap!.pointer == pointer) {
-      tracker = _firstTap;
-    }
-    // If tracker is still null, we rejected ourselves already
-    if (tracker != null) {
-      _reject(tracker);
-    }
+    // If we lose the arena for any pointer, drop the whole gesture. This avoids
+    // leaving stale held pointers which can break subsequent gestures on
+    // pointer-id reuse (observed on Android).
+    _reset();
   }
 
   void _reject(_TapTracker tracker) {
@@ -692,11 +690,17 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
   }
 
   void _reset() {
+    if (_isResetting) return;
+    _isResetting = true;
     _stopFirstTapUpTimer();
     _firstTap = null;
+    _isStart = false;
+    _upTap.clear();
+    _lastPointerDownEvent = null;
     _clearTrackers();
     _releaseAllHeldPointers();
     _didResolve = false;
+    _isResetting = false;
   }
 
   void _registerTap(_TapTracker tracker) {
@@ -707,7 +711,11 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
   }
 
   void _clearTrackers() {
-    _trackers.values.toList().forEach(_reject);
+    // Copy first: _reject mutates _trackers.
+    final trackers = _trackers.values.toList(growable: false);
+    for (final tracker in trackers) {
+      _reject(tracker);
+    }
     assert(_trackers.isEmpty);
   }
 
