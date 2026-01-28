@@ -39,6 +39,17 @@ class _RemoteWheelSliderState extends State<RemoteWheelSlider> {
   double get _currentWidth => _vertical ? widget.width : widget.height;
   double get _currentHeight => _vertical ? widget.height : widget.width;
 
+  @override
+  void initState() {
+    super.initState();
+    final raw = bind.mainGetLocalOption(key: kAndroidRemoteWheelSliderVertical);
+    if (raw == 'Y') {
+      _vertical = true;
+    } else if (raw == 'N') {
+      _vertical = false;
+    }
+  }
+
   double _getSensitivity() {
     final raw = bind.mainGetLocalOption(key: kAndroidWheelScrollSensitivity);
     final parsed = double.tryParse(raw.isEmpty
@@ -148,6 +159,10 @@ class _RemoteWheelSliderState extends State<RemoteWheelSlider> {
       _scrollIntegral = 0.0;
       if (_moveMode) _moveMode = false;
     });
+    bind.mainSetLocalOption(
+      key: kAndroidRemoteWheelSliderVertical,
+      value: _vertical ? 'Y' : 'N',
+    );
     widget.position.tryAdjust(_currentWidth, _currentHeight, 1);
     _updateBlockedRect();
     RemoteInputEventLog.add(
@@ -170,7 +185,10 @@ class _RemoteWheelSliderState extends State<RemoteWheelSlider> {
         label: 'u2_remote_wheel_slider',
         container: true,
         child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
+          // Allow underlying remote view to also participate in gesture arenas,
+          // so two-finger scrolling can still work even when fingers start on
+          // top of the slider.
+          behavior: HitTestBehavior.translucent,
           onDoubleTapDown: (d) => _lastDoubleTapDownLocal = d.localPosition,
           onDoubleTap: () {
             if (_moveMode) {

@@ -577,6 +577,8 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
   final Set<int> _upTap = {};
 
   final Map<int, _TapTracker> _trackers = <int, _TapTracker>{};
+  final Set<int> _heldPointers = <int>{};
+  bool _didResolve = false;
 
   @override
   bool isPointerAllowed(PointerDownEvent event) {
@@ -598,7 +600,6 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
 
   @override
   void addAllowedPointer(PointerDownEvent event) {
-    debugPrint("addAllowedPointer");
     if (_isStart) {
       // second
       if (onDoubleFinerTapDown != null) {
@@ -634,10 +635,14 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
   }
 
   void _handleEvent(PointerEvent event) {
-    final _TapTracker tracker = _trackers[event.pointer]!;
+    final _TapTracker? tracker = _trackers[event.pointer];
+    if (tracker == null) return;
     if (event is PointerUpEvent) {
-      debugPrint("PointerUpEvent");
       _upTap.add(tracker.pointer);
+      // Resolve as soon as we have both pointers up.
+      if (_upTap.length == 2) {
+        _resolve();
+      }
     } else if (event is PointerMoveEvent) {
       if (!tracker.isWithinGlobalTolerance(event, kDoubleTapTouchSlop)) {
         _reject(tracker);
@@ -665,6 +670,7 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
 
   void _reject(_TapTracker tracker) {
     _trackers.remove(tracker.pointer);
+    _releaseHeldPointer(tracker.pointer);
     tracker.entry.resolve(GestureDisposition.rejected);
     _freezeTracker(tracker);
     if (_firstTap != null) {
@@ -689,10 +695,13 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
     _stopFirstTapUpTimer();
     _firstTap = null;
     _clearTrackers();
+    _releaseAllHeldPointers();
+    _didResolve = false;
   }
 
   void _registerTap(_TapTracker tracker) {
     GestureBinding.instance.gestureArena.hold(tracker.pointer);
+    _heldPointers.add(tracker.pointer);
     // Note, order is important below in order for the clear -> reject logic to
     // work properly.
   }
@@ -728,16 +737,42 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
   }
 
   void _resolve() {
+    if (_didResolve) return;
+    _didResolve = true;
+    _stopFirstTapUpTimer();
     // TODO tap down details
     if (onDoubleFinerTap != null) {
       onDoubleFinerTap!(TapDownDetails(
         kind: _lastPointerDownEvent?.kind,
       ));
     }
-    _trackers.forEach((key, value) {
-      value.entry.resolve(GestureDisposition.accepted);
-    });
-    _reset();
+    final trackers = _trackers.values.toList(growable: false);
+    _trackers.clear();
+    for (final tracker in trackers) {
+      _releaseHeldPointer(tracker.pointer);
+      tracker.entry.resolve(GestureDisposition.accepted);
+      _freezeTracker(tracker);
+    }
+    _upTap.clear();
+    _isStart = false;
+    _firstTap = null;
+    _releaseAllHeldPointers();
+    _didResolve = false;
+  }
+
+  void _releaseHeldPointer(int pointer) {
+    if (_heldPointers.remove(pointer)) {
+      GestureBinding.instance.gestureArena.release(pointer);
+    }
+  }
+
+  void _releaseAllHeldPointers() {
+    if (_heldPointers.isEmpty) return;
+    final toRelease = _heldPointers.toList(growable: false);
+    _heldPointers.clear();
+    for (final pointer in toRelease) {
+      GestureBinding.instance.gestureArena.release(pointer);
+    }
   }
 
   void _checkCancel() {

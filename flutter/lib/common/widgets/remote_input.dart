@@ -115,6 +115,7 @@ class _RawTouchGestureDetectorRegionState
   double _twoFingerCtrlWheelIntegral = 0.0;
   int _twoFingerTapTs = 0;
   int _twoFingerCtrlWheelArmedUntilTs = 0;
+  bool _twoFingerCtrlWheelPendingConsume = false;
 
   int _suppressSingleTouchUntilTs = 0;
 
@@ -773,6 +774,7 @@ class _RawTouchGestureDetectorRegionState
 
   Future<void> _twoFingerCtrlWheelByDeltaDy(double deltaDy) async {
     final sensitivity = _getAndroidTwoFingerWheelSensitivity();
+    final reverseFactor = _getTwoFingerWheelReverseFactor();
     // Convert continuous finger motion into discrete wheel steps.
     const pixelsPerStep = 12.0;
     _twoFingerCtrlWheelIntegral += (-deltaDy) / pixelsPerStep * sensitivity;
@@ -781,7 +783,8 @@ class _RawTouchGestureDetectorRegionState
       final prevCtrl = inputModel.ctrl;
       inputModel.ctrl = true;
       try {
-        await inputModel.scroll(1);
+        final step = 1 * reverseFactor;
+        await inputModel.scroll(step);
       } finally {
         inputModel.ctrl = prevCtrl;
       }
@@ -791,8 +794,8 @@ class _RawTouchGestureDetectorRegionState
         data: {
           'x': anchor.dx.round(),
           'y': anchor.dy.round(),
-          'dir': 'up',
-          'step': 1,
+          'dir': (1 * reverseFactor) > 0 ? 'down' : 'up',
+          'step': step,
         },
       );
     }
@@ -800,7 +803,8 @@ class _RawTouchGestureDetectorRegionState
       final prevCtrl = inputModel.ctrl;
       inputModel.ctrl = true;
       try {
-        await inputModel.scroll(-1);
+        final step = -1 * reverseFactor;
+        await inputModel.scroll(step);
       } finally {
         inputModel.ctrl = prevCtrl;
       }
@@ -810,8 +814,8 @@ class _RawTouchGestureDetectorRegionState
         data: {
           'x': anchor.dx.round(),
           'y': anchor.dy.round(),
-          'dir': 'down',
-          'step': -1,
+          'dir': step > 0 ? 'down' : 'up',
+          'step': step,
         },
       );
     }
@@ -841,6 +845,10 @@ class _RawTouchGestureDetectorRegionState
       _suppressSingleTouch();
       _twoFingerWheelActive = true;
       final now = DateTime.now().millisecondsSinceEpoch;
+      if (_twoFingerCtrlWheelArmedUntilTs != 0 &&
+          now > _twoFingerCtrlWheelArmedUntilTs) {
+        _twoFingerCtrlWheelArmedUntilTs = 0;
+      }
       final armed = now <= _twoFingerCtrlWheelArmedUntilTs;
       _twoFingerGestureMode = armed
           ? _TwoFingerRemoteGestureMode.ctrlWheel
@@ -848,6 +856,7 @@ class _RawTouchGestureDetectorRegionState
       _twoFingerWheelIntegral = 0.0;
       _twoFingerCtrlWheelAnchorPos = Offset.zero;
       _twoFingerCtrlWheelIntegral = 0.0;
+      _twoFingerCtrlWheelPendingConsume = armed;
       _twoFingerWheelLockedPos = d.localFocalPoint;
       _twoFingerWheelLastFocal = d.localFocalPoint;
       if (!ffi.cursorModel.isInRemoteRect(_twoFingerWheelLockedPos)) {
@@ -864,8 +873,6 @@ class _RawTouchGestureDetectorRegionState
       if (armed) {
         // Anchor Ctrl+wheel to the initial two-finger touch point (A).
         _twoFingerCtrlWheelAnchorPos = _twoFingerWheelLockedPos;
-        // One-shot arm: consume immediately once a new two-finger gesture starts.
-        _twoFingerCtrlWheelArmedUntilTs = 0;
       }
     }
   }
@@ -894,6 +901,24 @@ class _RawTouchGestureDetectorRegionState
       if (_twoFingerGestureMode == _TwoFingerRemoteGestureMode.wheel) {
         await _twoFingerWheelScrollByDelta(delta.dy);
         return;
+      }
+
+      // Ctrl+wheel mode: if no scroll happened within the arm timeout, fall back
+      // to normal wheel.
+      if (_twoFingerCtrlWheelPendingConsume) {
+        final now = DateTime.now().millisecondsSinceEpoch;
+        if (_twoFingerCtrlWheelArmedUntilTs != 0 &&
+            now > _twoFingerCtrlWheelArmedUntilTs) {
+          _twoFingerGestureMode = _TwoFingerRemoteGestureMode.wheel;
+          _twoFingerCtrlWheelPendingConsume = false;
+          await _twoFingerWheelScrollByDelta(delta.dy);
+          return;
+        }
+        if (delta.dy != 0) {
+          // Consume Ctrl mode on the first scroll movement.
+          _twoFingerCtrlWheelPendingConsume = false;
+          _twoFingerCtrlWheelArmedUntilTs = 0;
+        }
       }
 
       final anchor = _twoFingerCtrlWheelAnchorPos;
@@ -958,6 +983,7 @@ class _RawTouchGestureDetectorRegionState
       _twoFingerWheelIntegral = 0.0;
       _twoFingerCtrlWheelAnchorPos = Offset.zero;
       _twoFingerCtrlWheelIntegral = 0.0;
+      _twoFingerCtrlWheelPendingConsume = false;
       _scale = 1;
       return;
     }

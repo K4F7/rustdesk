@@ -197,8 +197,10 @@ const String kOptionDisableFloatingWindow = "disable-floating-window";
 
 const String kOptionKeepScreenOn = "keep-screen-on";
 
-const String kOptionKeepAwakeDuringIncomingSessions = "keep-awake-during-incoming-sessions";
-const String kOptionKeepAwakeDuringOutgoingSessions = "keep-awake-during-outgoing-sessions";
+const String kOptionKeepAwakeDuringIncomingSessions =
+    "keep-awake-during-incoming-sessions";
+const String kOptionKeepAwakeDuringOutgoingSessions =
+    "keep-awake-during-outgoing-sessions";
 
 const String kOptionShowMobileAction = "showMobileActions";
 
@@ -208,6 +210,8 @@ const String kAndroidTwoFingerScrollSensitivity =
     "android-two-finger-scroll-sensitivity";
 const String kAndroidWheelScrollSensitivity =
     "android-wheel-scroll-sensitivity";
+const String kAndroidRemoteWheelSliderVertical =
+    "android-remote-wheel-slider-vertical";
 const String kAndroidRemoteShortcuts = "android-remote-shortcuts";
 const String kAndroidRemoteShortcutsVisible =
     "allow-android-remote-shortcuts-visible";
