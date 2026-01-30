@@ -1064,33 +1064,6 @@ pub fn handle_mouse_simulation_(evt: &MouseEvent, conn: i32) {
     en.set_ignore_flags(enigo_ignore_flags());
     #[cfg(not(target_os = "macos"))]
     let mut to_release = Vec::new();
-
-    #[cfg(not(target_os = "macos"))]
-    let mut press_mouse_modifiers = |en: &mut Enigo| {
-        for ref ck in evt.modifiers.iter() {
-            if let Some(key) = KEY_MAP.get(&ck.value()) {
-                if key != &Key::CapsLock && key != &Key::NumLock {
-                    if !get_modifier_state(key.clone(), en) {
-                        en.key_down(key.clone()).ok();
-                        #[cfg(windows)]
-                        modifier_sleep();
-                        to_release.push(key);
-                    }
-                }
-            }
-        }
-    };
-
-    #[cfg(target_os = "macos")]
-    let mut set_mouse_flags = |en: &mut Enigo| {
-        en.reset_flag();
-        for ref ck in evt.modifiers.iter() {
-            if let Some(key) = KEY_MAP.get(&ck.value()) {
-                en.add_flag(key);
-            }
-        }
-    };
-
     if evt_type == MOUSE_TYPE_DOWN {
         fix_modifiers(&evt.modifiers[..], &mut en, 0);
         #[cfg(target_os = "macos")]
@@ -1182,11 +1155,6 @@ pub fn handle_mouse_simulation_(evt: &MouseEvent, conn: i32) {
             _ => {}
         },
         MOUSE_TYPE_WHEEL | MOUSE_TYPE_TRACKPAD => {
-            #[cfg(target_os = "macos")]
-            set_mouse_flags(&mut en);
-            #[cfg(not(target_os = "macos"))]
-            press_mouse_modifiers(&mut en);
-
             #[allow(unused_mut)]
             let mut x = -evt.x;
             #[allow(unused_mut)]
@@ -1236,9 +1204,6 @@ pub fn handle_mouse_simulation_(evt: &MouseEvent, conn: i32) {
                     en.mouse_scroll_x(x);
                 }
             }
-
-            #[cfg(target_os = "macos")]
-            en.reset_flag();
         }
         _ => {}
     }
