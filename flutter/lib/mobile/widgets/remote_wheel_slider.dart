@@ -32,6 +32,8 @@ class _RemoteWheelSliderState extends State<RemoteWheelSlider> {
   bool _vertical = true;
   double _thumbOffset = 0.0; // px, +down / -up
   double _scrollIntegral = 0.0;
+  final Set<int> _downPointers = <int>{};
+  int? _activePointer;
   Offset? _lastDoubleTapDownLocal;
   Rect? _blockedRect;
   bool _thumbMoveLogged = false;
@@ -185,10 +187,7 @@ class _RemoteWheelSliderState extends State<RemoteWheelSlider> {
         label: 'u2_remote_wheel_slider',
         container: true,
         child: GestureDetector(
-          // Allow underlying remote view to also participate in gesture arenas,
-          // so two-finger scrolling can still work even when fingers start on
-          // top of the slider.
-          behavior: HitTestBehavior.translucent,
+          behavior: HitTestBehavior.opaque,
           onDoubleTapDown: (d) => _lastDoubleTapDownLocal = d.localPosition,
           onDoubleTap: () {
             if (_moveMode) {
@@ -203,114 +202,138 @@ class _RemoteWheelSliderState extends State<RemoteWheelSlider> {
             setState(() => _moveMode = true);
           },
           onLongPress: () => _toggleOrientation(screenSize),
-          onPanUpdate: (details) {
-            if (_moveMode) {
-              _moveBy(details.delta, screenSize);
-              return;
-            }
+          child: Listener(
+            // Avoid Drag/Pan gesture recognizers here: they can win the arena
+            // against the remote view's two-finger recognizer, making two-finger
+            // scrolling stop working after switching slider orientation.
+            //
+            // Handle 1-finger dragging manually and ignore multi-touch.
+            behavior: HitTestBehavior.opaque,
+            onPointerDown: (e) {
+              _downPointers.add(e.pointer);
+              if (_downPointers.length == 1) {
+                _activePointer = e.pointer;
+                if (!_moveMode) _thumbMoveLogged = false;
+              }
+            },
+            onPointerMove: (e) {
+              if (_downPointers.length != 1) return;
+              if (_activePointer != e.pointer) return;
 
-            final delta = _vertical ? details.delta.dy : details.delta.dx;
-            setState(() {
-              final mainLen = _vertical ? _currentHeight : _currentWidth;
-              _thumbOffset = (_thumbOffset + delta).clamp(
-                -(mainLen / 2 - 24),
-                (mainLen / 2 - 24),
-              );
-            });
-            _scrollByDelta(delta);
+              if (_moveMode) {
+                _moveBy(e.delta, screenSize);
+                return;
+              }
 
-            if (!_thumbMoveLogged && _thumbOffset.abs() > 4) {
-              _thumbMoveLogged = true;
-              RemoteInputEventLog.add(
-                'wheel_slider_thumb',
-                data: {
-                  'phase': 'move',
-                  'offset': _thumbOffset.round(),
-                },
-              );
-            }
-          },
-          onPanStart: (_) {
-            if (_moveMode) return;
-            _thumbMoveLogged = false;
-          },
-          onPanEnd: (_) {
-            if (_moveMode) return;
-            setState(() => _thumbOffset = 0);
-            RemoteInputEventLog.add(
-              'wheel_slider_thumb',
-              data: {
-                'phase': 'reset',
-                'offset': 0,
-              },
-            );
-          },
-          onPanCancel: () {
-            if (_moveMode) return;
-            setState(() => _thumbOffset = 0);
-            RemoteInputEventLog.add(
-              'wheel_slider_thumb',
-              data: {
-                'phase': 'reset',
-                'offset': 0,
-              },
-            );
-          },
-          child: Container(
-            decoration: BoxDecoration(
-              color: const Color(0xCC000000),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: _moveMode ? MyTheme.accent : Colors.white24,
-                width: _moveMode ? 1.5 : 1,
-              ),
-            ),
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                Positioned(
-                  top: _vertical ? 8 : null,
-                  left: _vertical ? null : 8,
-                  child: Icon(
-                    _moveMode
-                        ? Icons.open_with
-                        : (_vertical ? Icons.swap_vert : Icons.swap_horiz),
-                    size: 14,
-                    color: _moveMode ? Colors.white : Colors.white70,
-                  ),
+              final delta = _vertical ? e.delta.dy : e.delta.dx;
+              setState(() {
+                final mainLen = _vertical ? _currentHeight : _currentWidth;
+                _thumbOffset = (_thumbOffset + delta).clamp(
+                  -(mainLen / 2 - 24),
+                  (mainLen / 2 - 24),
+                );
+              });
+              _scrollByDelta(delta);
+
+              if (!_thumbMoveLogged && _thumbOffset.abs() > 4) {
+                _thumbMoveLogged = true;
+                RemoteInputEventLog.add(
+                  'wheel_slider_thumb',
+                  data: {
+                    'phase': 'move',
+                    'offset': _thumbOffset.round(),
+                  },
+                );
+              }
+            },
+            onPointerUp: (e) {
+              _downPointers.remove(e.pointer);
+              if (_activePointer == e.pointer) {
+                _activePointer = null;
+                if (_downPointers.isEmpty && !_moveMode) {
+                  setState(() => _thumbOffset = 0);
+                  RemoteInputEventLog.add(
+                    'wheel_slider_thumb',
+                    data: {
+                      'phase': 'reset',
+                      'offset': 0,
+                    },
+                  );
+                }
+              }
+            },
+            onPointerCancel: (e) {
+              _downPointers.remove(e.pointer);
+              if (_activePointer == e.pointer) {
+                _activePointer = null;
+                if (_downPointers.isEmpty && !_moveMode) {
+                  setState(() => _thumbOffset = 0);
+                  RemoteInputEventLog.add(
+                    'wheel_slider_thumb',
+                    data: {
+                      'phase': 'reset',
+                      'offset': 0,
+                    },
+                  );
+                }
+              }
+            },
+            child: Container(
+              decoration: BoxDecoration(
+                color: const Color(0xCC000000),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: _moveMode ? MyTheme.accent : Colors.white24,
+                  width: _moveMode ? 1.5 : 1,
                 ),
-                AnimatedAlign(
-                  alignment: _vertical
-                      ? Alignment(0, _thumbOffset / (_currentHeight / 2 - 24))
-                      : Alignment(_thumbOffset / (_currentWidth / 2 - 24), 0),
-                  duration: const Duration(milliseconds: 260),
-                  curve: Curves.elasticOut,
-                  child: Semantics(
-                    label: 'u2_remote_wheel_slider_thumb',
-                    container: true,
-                    child: Container(
-                      width: _vertical ? (_currentWidth - 16) : 36,
-                      height: _vertical ? 36 : (_currentHeight - 16),
-                      decoration: BoxDecoration(
-                        color: _moveMode
-                            ? Colors.white24
-                            : Colors.white.withOpacity(0.14),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.white24),
+              ),
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  Positioned(
+                    top: _vertical ? 8 : null,
+                    left: _vertical ? null : 8,
+                    child: Icon(
+                      _moveMode
+                          ? Icons.open_with
+                          : (_vertical ? Icons.swap_vert : Icons.swap_horiz),
+                      size: 14,
+                      color: _moveMode ? Colors.white : Colors.white70,
+                    ),
+                  ),
+                  AnimatedAlign(
+                    alignment: _vertical
+                        ? Alignment(0, _thumbOffset / (_currentHeight / 2 - 24))
+                        : Alignment(_thumbOffset / (_currentWidth / 2 - 24), 0),
+                    duration: const Duration(milliseconds: 260),
+                    curve: Curves.elasticOut,
+                    child: Semantics(
+                      label: 'u2_remote_wheel_slider_thumb',
+                      container: true,
+                      child: Container(
+                        width: _vertical ? (_currentWidth - 16) : 36,
+                        height: _vertical ? 36 : (_currentHeight - 16),
+                        decoration: BoxDecoration(
+                          color: _moveMode
+                              ? Colors.white24
+                              : Colors.white.withOpacity(0.14),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.white24),
+                        ),
                       ),
                     ),
                   ),
-                ),
-                Positioned(
-                  bottom: _vertical ? 8 : null,
-                  right: _vertical ? null : 8,
-                  child: Icon(
-                    Icons.mouse,
-                    size: 14,
-                    color: Colors.white70,
+                  Positioned(
+                    bottom: _vertical ? 8 : null,
+                    right: _vertical ? null : 8,
+                    child: Icon(
+                      Icons.mouse,
+                      size: 14,
+                      color: Colors.white70,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

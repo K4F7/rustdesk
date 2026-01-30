@@ -114,6 +114,17 @@ class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
   }
 
   @override
+  void rejectGesture(int pointer) {
+    // If this recognizer loses the gesture arena, it may stop receiving
+    // PointerUp/Cancel events for that pointer. Ensure we don't leak
+    // per-pointer bookkeeping, otherwise subsequent two-finger gestures can
+    // fail (e.g. pointers length != 2 forever) until the widget is rebuilt.
+    _pointerLocalPositions.remove(pointer);
+    _pointerLocalDeltas.remove(pointer);
+    super.rejectGesture(pointer);
+  }
+
+  @override
   void handleEvent(PointerEvent event) {
     super.handleEvent(event);
     if (event is PointerMoveEvent) {
@@ -130,6 +141,13 @@ class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
       _pointerLocalPositions.remove(event.pointer);
       _pointerLocalDeltas.remove(event.pointer);
     }
+  }
+
+  @override
+  void dispose() {
+    _pointerLocalPositions.clear();
+    _pointerLocalDeltas.clear();
+    super.dispose();
   }
 
   void _init() {
