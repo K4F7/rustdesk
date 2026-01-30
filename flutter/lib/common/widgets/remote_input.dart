@@ -120,6 +120,7 @@ class _RawTouchGestureDetectorRegionState
   double _edgeCtrlInwardAccum = 0.0;
   double _edgeCtrlAbsDyAccum = 0.0;
   double _edgeCtrlOutIntegral = 0.0;
+  bool _gestureDiagInitLogged = false;
 
   int _suppressSingleTouchUntilTs = 0;
 
@@ -164,6 +165,25 @@ class _RawTouchGestureDetectorRegionState
     if (until > _suppressSingleTouchUntilTs) {
       _suppressSingleTouchUntilTs = until;
     }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _gestureDiagInitLogged) return;
+      _gestureDiagInitLogged = true;
+      final size = _gestureRegionSize();
+      _gestureDiag('remote_input_region_ready', {
+        'size_w': size.width,
+        'size_h': size.height,
+        'dpr': MediaQueryData.fromView(View.of(context)).devicePixelRatio,
+        'is_android': isAndroid,
+        'handle_touch': handleTouch,
+        'peer_mobile': ffiModel.isPeerMobile,
+        'is_camera': widget.isCamera,
+      });
+    });
   }
 
   @override
@@ -713,7 +733,8 @@ class _RawTouchGestureDetectorRegionState
     // Avoid per-frame spam: only log state transitions / one-shot decisions.
     final payload = data == null ? '' : ' ${json.encode(data)}';
     // Most reliable for logcat visibility.
-    debugPrint('[$_gestureDiagLogName] $event$payload');
+    // Use `print` to ensure it shows up under I/flutter in release/profile too.
+    print('[$_gestureDiagLogName] $event$payload');
     // Structured log record (may be filtered differently on some builds).
     developer.log('$event$payload', name: _gestureDiagLogName);
   }
