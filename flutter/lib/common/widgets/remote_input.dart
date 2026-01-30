@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -96,6 +97,7 @@ class _RawTouchGestureDetectorRegionState
   static const double _edgeCtrlWheelDprBaseline = 2.75;
   static const double _edgeCtrlWheelDprClampMin = 0.75;
   static const double _edgeCtrlWheelDprClampMax = 1.25;
+  static const String _gestureDiagLogName = 'gesture_diag';
 
   Offset _cacheLongPressPosition = Offset(0, 0);
   // Timestamp of the last long press event.
@@ -706,6 +708,16 @@ class _RawTouchGestureDetectorRegionState
     return MediaQueryData.fromView(View.of(context)).size;
   }
 
+  void _gestureDiag(String event, [Map<String, Object?>? data]) {
+    // Low-volume diagnostics visible in `adb logcat`, even in release builds.
+    // Avoid per-frame spam: only log state transitions / one-shot decisions.
+    developer.log(
+      event,
+      name: _gestureDiagLogName,
+      error: data == null ? null : json.encode(data),
+    );
+  }
+
   bool _getReverseMouseWheel() {
     var optionValue =
         bind.sessionGetReverseMouseWheelSync(sessionId: inputModel.sessionId) ??
@@ -822,6 +834,17 @@ class _RawTouchGestureDetectorRegionState
         'b_x': d.pointerBLocalPosition.dx.round(),
       },
     );
+    _gestureDiag('sep_ctrl_wheel_candidate', {
+      'w': size.width,
+      'sep_x': sepX,
+      'min_sep_x': size.width * _separatedCtrlWheelMinSepXFraction,
+      'decide_ms': _separatedCtrlWheelDecideWindowMs,
+      'a_x': d.pointerALocalPosition.dx,
+      'b_x': d.pointerBLocalPosition.dx,
+      'dpr': MediaQueryData.fromView(View.of(context)).devicePixelRatio,
+      'deadzone_px': _edgeCtrlWheelDeadzonePx,
+      'px_per_step': _edgeCtrlWheelPixelsPerStep,
+    });
     return true;
   }
 
@@ -873,6 +896,11 @@ class _RawTouchGestureDetectorRegionState
     if (!_twoFingerEdgeCtrlWheelActive) {
       // Decide early if it clearly looks like a normal two-finger scroll.
       if (vert >= _edgeCtrlWheelDeadzonePx && vert > dominance * horiz) {
+        _gestureDiag('sep_ctrl_wheel_fallback_scroll', {
+          'vert': vert,
+          'horiz': horiz,
+          'deadzone_px': _edgeCtrlWheelDeadzonePx,
+        });
         _twoFingerEdgeCtrlWheelCandidate = false;
         return false;
       }
@@ -886,6 +914,12 @@ class _RawTouchGestureDetectorRegionState
             'dir': _edgeCtrlOutwardAccum >= _edgeCtrlInwardAccum ? 'out' : 'in'
           },
         );
+        _gestureDiag('sep_ctrl_wheel_active', {
+          'dir': _edgeCtrlOutwardAccum >= _edgeCtrlInwardAccum ? 'out' : 'in',
+          'vert': vert,
+          'horiz': horiz,
+          'deadzone_px': _edgeCtrlWheelDeadzonePx,
+        });
         final excess = horiz - _edgeCtrlWheelDeadzonePx;
         if (excess > 0) {
           final sign =
@@ -902,6 +936,11 @@ class _RawTouchGestureDetectorRegionState
           return true;
         }
         // Default to normal wheel after timeout.
+        _gestureDiag('sep_ctrl_wheel_timeout_fallback_scroll', {
+          'vert': vert,
+          'horiz': horiz,
+          'deadzone_px': _edgeCtrlWheelDeadzonePx,
+        });
         _twoFingerEdgeCtrlWheelCandidate = false;
         return false;
       }
