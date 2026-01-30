@@ -113,6 +113,7 @@ class _RawTouchGestureDetectorRegionState
   int? _edgeCtrlLeftPointer;
   int? _edgeCtrlRightPointer;
   Offset _edgeCtrlWheelAnchorPos = Offset.zero;
+  bool _sepCtrlWheelCtrlHeld = false;
   double _edgeCtrlWheelDeadzonePx = _edgeCtrlWheelDeadzoneBasePx;
   double _edgeCtrlWheelPixelsPerStep = _edgeCtrlWheelPixelsPerStepBasePx;
   int _edgeCtrlWheelDecideUntilTs = 0;
@@ -739,6 +740,19 @@ class _RawTouchGestureDetectorRegionState
     developer.log('$event$payload', name: _gestureDiagLogName);
   }
 
+  void _setSepCtrlWheelCtrlHeld(bool held) {
+    if (_sepCtrlWheelCtrlHeld == held) return;
+    if (!inputModel.keyboardPerm) {
+      _gestureDiag('sep_ctrl_wheel_ctrl_denied', {
+        'keyboardPerm': inputModel.keyboardPerm,
+      });
+      return;
+    }
+    inputModel.inputKey('VK_CONTROL', down: held, press: false);
+    _sepCtrlWheelCtrlHeld = held;
+    _gestureDiag('sep_ctrl_wheel_ctrl_${held ? 'down' : 'up'}');
+  }
+
   bool _getReverseMouseWheel() {
     var optionValue =
         bind.sessionGetReverseMouseWheelSync(sessionId: inputModel.sessionId) ??
@@ -887,20 +901,12 @@ class _RawTouchGestureDetectorRegionState
   }
 
   Future<void> _sendCtrlWheelStep(int step, Offset anchor) async {
-    // For browser zoom, keep step direction intuitive:
-    // outward => zoom in => wheel up (step < 0), inward => zoom out => wheel down.
-    final prevCtrl = inputModel.ctrl;
-    inputModel.ctrl = true;
-    try {
-      // Keep the anchor stable to avoid zooming at a drifting cursor location.
-      if (!ffi.cursorModel.shouldBlock(anchor.dx, anchor.dy) &&
-          ffi.cursorModel.isInRemoteRect(anchor)) {
-        await ffi.cursorModel.move(anchor.dx, anchor.dy);
-      }
-      await inputModel.scroll(step);
-    } finally {
-      inputModel.ctrl = prevCtrl;
+    // Keep the anchor stable to avoid zooming at a drifting cursor location.
+    if (!ffi.cursorModel.shouldBlock(anchor.dx, anchor.dy) &&
+        ffi.cursorModel.isInRemoteRect(anchor)) {
+      await ffi.cursorModel.move(anchor.dx, anchor.dy);
     }
+    await inputModel.scroll(step);
   }
 
   Future<bool> _handleEdgeCtrlWheelUpdate(TwoFingerScaleUpdateDetails d) async {
@@ -946,6 +952,7 @@ class _RawTouchGestureDetectorRegionState
       // Decide early if it clearly looks like an outward/inward split gesture.
       if (horiz >= _edgeCtrlWheelDeadzonePx && horiz > dominance * vert) {
         _twoFingerEdgeCtrlWheelActive = true;
+        _setSepCtrlWheelCtrlHeld(true);
         RemoteInputEventLog.add(
           'sep_ctrl_wheel_active',
           data: {
@@ -1019,6 +1026,7 @@ class _RawTouchGestureDetectorRegionState
 
     if (_shouldUseTwoFingerRemoteWheelOrZoom()) {
       _suppressSingleTouch();
+      _setSepCtrlWheelCtrlHeld(false);
       _twoFingerEdgeCtrlWheelCandidate = false;
       _twoFingerEdgeCtrlWheelActive = false;
       _edgeCtrlLeftPointer = null;
@@ -1123,6 +1131,7 @@ class _RawTouchGestureDetectorRegionState
     }
     if (_shouldUseTwoFingerRemoteWheelOrZoom()) {
       _suppressSingleTouch();
+      _setSepCtrlWheelCtrlHeld(false);
       _twoFingerWheelActive = false;
       _twoFingerWheelIntegral = 0.0;
       _twoFingerEdgeCtrlWheelCandidate = false;
