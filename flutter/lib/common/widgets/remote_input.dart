@@ -711,11 +711,11 @@ class _RawTouchGestureDetectorRegionState
   void _gestureDiag(String event, [Map<String, Object?>? data]) {
     // Low-volume diagnostics visible in `adb logcat`, even in release builds.
     // Avoid per-frame spam: only log state transitions / one-shot decisions.
-    developer.log(
-      event,
-      name: _gestureDiagLogName,
-      error: data == null ? null : json.encode(data),
-    );
+    final payload = data == null ? '' : ' ${json.encode(data)}';
+    // Most reliable for logcat visibility.
+    debugPrint('[$_gestureDiagLogName] $event$payload');
+    // Structured log record (may be filtered differently on some builds).
+    developer.log('$event$payload', name: _gestureDiagLogName);
   }
 
   bool _getReverseMouseWheel() {
@@ -798,11 +798,28 @@ class _RawTouchGestureDetectorRegionState
     final aX = d.pointerALocalPosition.dx;
     final bX = d.pointerBLocalPosition.dx;
     final sepX = (aX - bX).abs();
-    if (sepX / size.width < _separatedCtrlWheelMinSepXFraction) return false;
+    final minSepX = size.width * _separatedCtrlWheelMinSepXFraction;
+    if (sepX < minSepX) {
+      _gestureDiag('sep_ctrl_wheel_reject_sep', {
+        'w': size.width,
+        'sep_x': sepX,
+        'min_sep_x': minSepX,
+        'a_x': aX,
+        'b_x': bX,
+      });
+      return false;
+    }
 
     final inOppositeHalves = (aX < size.width / 2 && bX > size.width / 2) ||
         (bX < size.width / 2 && aX > size.width / 2);
-    if (!inOppositeHalves) return false;
+    if (!inOppositeHalves) {
+      _gestureDiag('sep_ctrl_wheel_reject_halves', {
+        'w': size.width,
+        'a_x': aX,
+        'b_x': bX,
+      });
+      return false;
+    }
 
     final leftPointer = aX <= bX ? d.pointerA : d.pointerB;
     final rightPointer = aX <= bX ? d.pointerB : d.pointerA;
