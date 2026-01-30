@@ -11,6 +11,65 @@ enum GestureState {
   threeFingerVerticalDrag
 }
 
+class TwoFingerScaleStartDetails {
+  final Offset localFocalPoint;
+  final Offset focalPoint;
+  final int pointerA;
+  final int pointerB;
+  final Offset pointerALocalPosition;
+  final Offset pointerBLocalPosition;
+
+  const TwoFingerScaleStartDetails({
+    required this.localFocalPoint,
+    required this.focalPoint,
+    required this.pointerA,
+    required this.pointerB,
+    required this.pointerALocalPosition,
+    required this.pointerBLocalPosition,
+  });
+}
+
+class TwoFingerScaleUpdateDetails {
+  final Offset localFocalPoint;
+  final Offset focalPoint;
+  final Offset focalPointDelta;
+  final double scale;
+  final int pointerA;
+  final int pointerB;
+  final Offset pointerALocalPosition;
+  final Offset pointerBLocalPosition;
+  final Offset pointerADelta;
+  final Offset pointerBDelta;
+
+  const TwoFingerScaleUpdateDetails({
+    required this.localFocalPoint,
+    required this.focalPoint,
+    required this.focalPointDelta,
+    required this.scale,
+    required this.pointerA,
+    required this.pointerB,
+    required this.pointerALocalPosition,
+    required this.pointerBLocalPosition,
+    required this.pointerADelta,
+    required this.pointerBDelta,
+  });
+}
+
+class TwoFingerScaleEndDetails {
+  final Velocity velocity;
+
+  const TwoFingerScaleEndDetails({
+    required this.velocity,
+  });
+}
+
+typedef TwoFingerScaleStartCallback = void Function(
+    TwoFingerScaleStartDetails details);
+typedef TwoFingerScaleUpdateCallback = void Function(
+    TwoFingerScaleUpdateDetails details);
+typedef TwoFingerScaleEndCallback = void Function(
+    TwoFingerScaleEndDetails details);
+
 class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
   CustomTouchGestureRecognizer({
     Object? debugOwner,
@@ -32,12 +91,64 @@ class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
   GestureScaleUpdateCallback? onTwoFingerScaleUpdate;
   GestureScaleEndCallback? onTwoFingerScaleEnd;
 
+  // twoFingerScale with per-pointer deltas/positions
+  TwoFingerScaleStartCallback? onTwoFingerScaleStartEx;
+  TwoFingerScaleUpdateCallback? onTwoFingerScaleUpdateEx;
+  TwoFingerScaleEndCallback? onTwoFingerScaleEndEx;
+
   // threeFingerVerticalDrag
   GestureDragStartCallback? onThreeFingerVerticalDragStart;
   GestureDragUpdateCallback? onThreeFingerVerticalDragUpdate;
   GestureDragEndCallback? onThreeFingerVerticalDragEnd;
 
   var _currentState = GestureState.none;
+
+  final Map<int, Offset> _pointerLocalPositions = {};
+  final Map<int, Offset> _pointerLocalDeltas = {};
+
+  @override
+  void addPointer(PointerDownEvent event) {
+    super.addPointer(event);
+    _pointerLocalPositions[event.pointer] = event.localPosition;
+    _pointerLocalDeltas[event.pointer] = Offset.zero;
+  }
+
+  @override
+  void rejectGesture(int pointer) {
+    // If this recognizer loses the gesture arena, it may stop receiving
+    // PointerUp/Cancel events for that pointer. Ensure we don't leak
+    // per-pointer bookkeeping, otherwise subsequent two-finger gestures can
+    // fail (e.g. pointers length != 2 forever) until the widget is rebuilt.
+    _pointerLocalPositions.remove(pointer);
+    _pointerLocalDeltas.remove(pointer);
+    super.rejectGesture(pointer);
+  }
+
+  @override
+  void handleEvent(PointerEvent event) {
+    super.handleEvent(event);
+    if (event is PointerMoveEvent) {
+      final prev = _pointerLocalPositions[event.pointer];
+      if (prev != null) {
+        _pointerLocalDeltas[event.pointer] = event.localPosition - prev;
+      } else {
+        _pointerLocalDeltas[event.pointer] = Offset.zero;
+      }
+      _pointerLocalPositions[event.pointer] = event.localPosition;
+      return;
+    }
+    if (event is PointerUpEvent || event is PointerCancelEvent) {
+      _pointerLocalPositions.remove(event.pointer);
+      _pointerLocalDeltas.remove(event.pointer);
+    }
+  }
+
+  @override
+  void dispose() {
+    _pointerLocalPositions.clear();
+    _pointerLocalDeltas.clear();
+    super.dispose();
+  }
 
   void _init() {
     debugPrint("CustomTouchGestureRecognizer init");
@@ -55,6 +166,11 @@ class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
         if (onTwoFingerScaleStart != null) {
           onTwoFingerScaleStart!(ScaleStartDetails(
               localFocalPoint: d.localFocalPoint, focalPoint: d.focalPoint));
+        }
+        final ex = _buildTwoFingerStartDetails(ScaleStartDetails(
+            localFocalPoint: d.localFocalPoint, focalPoint: d.focalPoint));
+        if (ex != null && onTwoFingerScaleStartEx != null) {
+          onTwoFingerScaleStartEx!(ex);
         }
       } else if (d.pointerCount == 3 &&
           _currentState != GestureState.threeFingerVerticalDrag) {
@@ -75,6 +191,10 @@ class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
           case GestureState.twoFingerScale:
             if (onTwoFingerScaleUpdate != null) {
               onTwoFingerScaleUpdate!(d);
+            }
+            final ex = _buildTwoFingerUpdateDetails(d);
+            if (ex != null && onTwoFingerScaleUpdateEx != null) {
+              onTwoFingerScaleUpdateEx!(ex);
             }
             break;
           case GestureState.threeFingerVerticalDrag:
@@ -102,6 +222,10 @@ class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
           debugPrint("TwoFingerState.scale onEnd");
           if (onTwoFingerScaleEnd != null) {
             onTwoFingerScaleEnd!(d);
+          }
+          if (onTwoFingerScaleEndEx != null) {
+            onTwoFingerScaleEndEx!(
+                TwoFingerScaleEndDetails(velocity: d.velocity));
           }
           if (isSpecialHoldDragActive) {
             // If we are in special drag mode, we need to reset the state.
@@ -131,6 +255,53 @@ class CustomTouchGestureRecognizer extends ScaleGestureRecognizer {
 
   DragEndDetails _getDragEndDetails(ScaleEndDetails d) =>
       DragEndDetails(velocity: d.velocity);
+
+  TwoFingerScaleStartDetails? _buildTwoFingerStartDetails(ScaleStartDetails d) {
+    final pointers = _pointerLocalPositions.keys.toList()..sort();
+    if (pointers.length != 2) return null;
+    final a = pointers[0];
+    final b = pointers[1];
+    final aPos = _pointerLocalPositions[a];
+    final bPos = _pointerLocalPositions[b];
+    if (aPos == null || bPos == null) return null;
+    return TwoFingerScaleStartDetails(
+      localFocalPoint: d.localFocalPoint,
+      focalPoint: d.focalPoint,
+      pointerA: a,
+      pointerB: b,
+      pointerALocalPosition: aPos,
+      pointerBLocalPosition: bPos,
+    );
+  }
+
+  TwoFingerScaleUpdateDetails? _buildTwoFingerUpdateDetails(
+      ScaleUpdateDetails d) {
+    final pointers = _pointerLocalPositions.keys.toList()..sort();
+    if (pointers.length != 2) return null;
+    final a = pointers[0];
+    final b = pointers[1];
+    final aPos = _pointerLocalPositions[a];
+    final bPos = _pointerLocalPositions[b];
+    if (aPos == null || bPos == null) return null;
+    final aDelta = _pointerLocalDeltas[a] ?? Offset.zero;
+    final bDelta = _pointerLocalDeltas[b] ?? Offset.zero;
+    // Consume the deltas to ensure the next update sees 0 movement unless there
+    // is a new PointerMoveEvent for that pointer.
+    _pointerLocalDeltas[a] = Offset.zero;
+    _pointerLocalDeltas[b] = Offset.zero;
+    return TwoFingerScaleUpdateDetails(
+      localFocalPoint: d.localFocalPoint,
+      focalPoint: d.focalPoint,
+      focalPointDelta: d.focalPointDelta,
+      scale: d.scale,
+      pointerA: a,
+      pointerB: b,
+      pointerALocalPosition: aPos,
+      pointerBLocalPosition: bPos,
+      pointerADelta: aDelta,
+      pointerBDelta: bDelta,
+    );
+  }
 }
 
 class HoldTapMoveGestureRecognizer extends GestureRecognizer {
@@ -424,6 +595,9 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
   final Set<int> _upTap = {};
 
   final Map<int, _TapTracker> _trackers = <int, _TapTracker>{};
+  final Set<int> _heldPointers = <int>{};
+  bool _didResolve = false;
+  bool _isResetting = false;
 
   @override
   bool isPointerAllowed(PointerDownEvent event) {
@@ -445,7 +619,6 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
 
   @override
   void addAllowedPointer(PointerDownEvent event) {
-    debugPrint("addAllowedPointer");
     if (_isStart) {
       // second
       if (onDoubleFinerTapDown != null) {
@@ -481,16 +654,22 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
   }
 
   void _handleEvent(PointerEvent event) {
-    final _TapTracker tracker = _trackers[event.pointer]!;
+    final _TapTracker? tracker = _trackers[event.pointer];
+    if (tracker == null) return;
     if (event is PointerUpEvent) {
-      debugPrint("PointerUpEvent");
       _upTap.add(tracker.pointer);
+      // Resolve as soon as we have both pointers up.
+      if (_upTap.length == 2) {
+        _resolve();
+      }
     } else if (event is PointerMoveEvent) {
       if (!tracker.isWithinGlobalTolerance(event, kDoubleTapTouchSlop)) {
-        _reject(tracker);
+        // Reject the whole gesture as soon as we detect movement, so that
+        // two-finger scroll/scale can win the arena immediately.
+        _reset();
       }
     } else if (event is PointerCancelEvent) {
-      _reject(tracker);
+      _reset();
     }
   }
 
@@ -499,19 +678,15 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
 
   @override
   void rejectGesture(int pointer) {
-    _TapTracker? tracker = _trackers[pointer];
-    // If tracker isn't in the list, check if this is the first tap tracker
-    if (tracker == null && _firstTap != null && _firstTap!.pointer == pointer) {
-      tracker = _firstTap;
-    }
-    // If tracker is still null, we rejected ourselves already
-    if (tracker != null) {
-      _reject(tracker);
-    }
+    // If we lose the arena for any pointer, drop the whole gesture. This avoids
+    // leaving stale held pointers which can break subsequent gestures on
+    // pointer-id reuse (observed on Android).
+    _reset();
   }
 
   void _reject(_TapTracker tracker) {
     _trackers.remove(tracker.pointer);
+    _releaseHeldPointer(tracker.pointer);
     tracker.entry.resolve(GestureDisposition.rejected);
     _freezeTracker(tracker);
     if (_firstTap != null) {
@@ -533,19 +708,32 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
   }
 
   void _reset() {
+    if (_isResetting) return;
+    _isResetting = true;
     _stopFirstTapUpTimer();
     _firstTap = null;
+    _isStart = false;
+    _upTap.clear();
+    _lastPointerDownEvent = null;
     _clearTrackers();
+    _releaseAllHeldPointers();
+    _didResolve = false;
+    _isResetting = false;
   }
 
   void _registerTap(_TapTracker tracker) {
     GestureBinding.instance.gestureArena.hold(tracker.pointer);
+    _heldPointers.add(tracker.pointer);
     // Note, order is important below in order for the clear -> reject logic to
     // work properly.
   }
 
   void _clearTrackers() {
-    _trackers.values.toList().forEach(_reject);
+    // Copy first: _reject mutates _trackers.
+    final trackers = _trackers.values.toList(growable: false);
+    for (final tracker in trackers) {
+      _reject(tracker);
+    }
     assert(_trackers.isEmpty);
   }
 
@@ -575,16 +763,42 @@ class DoubleFinerTapGestureRecognizer extends GestureRecognizer {
   }
 
   void _resolve() {
+    if (_didResolve) return;
+    _didResolve = true;
+    _stopFirstTapUpTimer();
     // TODO tap down details
     if (onDoubleFinerTap != null) {
       onDoubleFinerTap!(TapDownDetails(
         kind: _lastPointerDownEvent?.kind,
       ));
     }
-    _trackers.forEach((key, value) {
-      value.entry.resolve(GestureDisposition.accepted);
-    });
-    _reset();
+    final trackers = _trackers.values.toList(growable: false);
+    _trackers.clear();
+    for (final tracker in trackers) {
+      _releaseHeldPointer(tracker.pointer);
+      tracker.entry.resolve(GestureDisposition.accepted);
+      _freezeTracker(tracker);
+    }
+    _upTap.clear();
+    _isStart = false;
+    _firstTap = null;
+    _releaseAllHeldPointers();
+    _didResolve = false;
+  }
+
+  void _releaseHeldPointer(int pointer) {
+    if (_heldPointers.remove(pointer)) {
+      GestureBinding.instance.gestureArena.release(pointer);
+    }
+  }
+
+  void _releaseAllHeldPointers() {
+    if (_heldPointers.isEmpty) return;
+    final toRelease = _heldPointers.toList(growable: false);
+    _heldPointers.clear();
+    for (final pointer in toRelease) {
+      GestureBinding.instance.gestureArena.release(pointer);
+    }
   }
 
   void _checkCancel() {

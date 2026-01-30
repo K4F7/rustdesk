@@ -59,7 +59,8 @@ class CanvasCoords {
     model.scale = json['scale'];
     model.scrollX = json['scrollX'];
     model.scrollY = json['scrollY'];
-    model.scrollStyle = ScrollStyle.fromJson(json['scrollStyle'], ScrollStyle.scrollauto);
+    model.scrollStyle =
+        ScrollStyle.fromJson(json['scrollStyle'], ScrollStyle.scrollauto);
     model.size = Size(json['size']['w'], json['size']['h']);
     return model;
   }
@@ -334,6 +335,24 @@ class InputModel {
   var ctrl = false;
   var alt = false;
   var command = false;
+
+  // Sticky modifiers, used by Android remote shortcuts "hold" mode.
+  //
+  // Rationale: some remote-side implementations and/or input paths rely on the
+  // per-event modifier flags (alt/ctrl/shift/command) more than the OS key-down
+  // state; keeping sticky flags separate avoids fighting with physical-key
+  // tracking.
+  var shortcutStickyShift = false;
+  var shortcutStickyCtrl = false;
+  var shortcutStickyAlt = false;
+  var shortcutStickyCommand = false;
+
+  void resetShortcutStickyModifiers() {
+    shortcutStickyShift = false;
+    shortcutStickyCtrl = false;
+    shortcutStickyAlt = false;
+    shortcutStickyCommand = false;
+  }
 
   final ToReleaseRawKeys toReleaseRawKeys = ToReleaseRawKeys();
   final ToReleaseKeys toReleaseKeys = ToReleaseKeys();
@@ -807,15 +826,19 @@ class InputModel {
   void inputKey(String name, {bool? down, bool? press}) {
     if (!keyboardPerm) return;
     if (isViewCamera) return;
+    final effectiveAlt = alt || shortcutStickyAlt;
+    final effectiveCtrl = ctrl || shortcutStickyCtrl;
+    final effectiveShift = shift || shortcutStickyShift;
+    final effectiveCommand = command || shortcutStickyCommand;
     bind.sessionInputKey(
         sessionId: sessionId,
         name: name,
         down: down ?? false,
         press: press ?? true,
-        alt: alt,
-        ctrl: ctrl,
-        shift: shift,
-        command: command);
+        alt: effectiveAlt,
+        ctrl: effectiveCtrl,
+        shift: effectiveShift,
+        command: effectiveCommand);
   }
 
   static Map<String, dynamic> getMouseEventMove() => {
@@ -873,11 +896,25 @@ class InputModel {
 
   /// Send scroll event with scroll distance [y].
   Future<void> scroll(int y) async {
+    await scrollWheel(y: y);
+  }
+
+  /// Send wheel event with optional horizontal/vertical distance.
+  Future<void> scrollWheel({int x = 0, int y = 0}) async {
     if (isViewCamera) return;
+    // Keep consistent with the server-side wheel handling:
+    // the Rust input service negates `x` internally for wheel/trackpad events.
+    // Define `x > 0` as "scroll right" on the client and compensate here.
+    final sendX = (-x).toString();
     await bind.sessionSendMouse(
-        sessionId: sessionId,
-        msg: json
-            .encode(modify({'id': id, 'type': 'wheel', 'y': y.toString()})));
+      sessionId: sessionId,
+      msg: json.encode(modify({
+        'id': id,
+        'type': 'wheel',
+        'x': sendX,
+        'y': y.toString(),
+      })),
+    );
   }
 
   /// Reset key modifiers to false, including [shift], [ctrl], [alt] and [command].
@@ -887,10 +924,14 @@ class InputModel {
 
   /// Modify the given modifier map [evt] based on current modifier key status.
   Map<String, dynamic> modify(Map<String, dynamic> evt) {
-    if (ctrl) evt['ctrl'] = 'true';
-    if (shift) evt['shift'] = 'true';
-    if (alt) evt['alt'] = 'true';
-    if (command) evt['command'] = 'true';
+    final effectiveAlt = alt || shortcutStickyAlt;
+    final effectiveCtrl = ctrl || shortcutStickyCtrl;
+    final effectiveShift = shift || shortcutStickyShift;
+    final effectiveCommand = command || shortcutStickyCommand;
+    if (effectiveCtrl) evt['ctrl'] = 'true';
+    if (effectiveShift) evt['shift'] = 'true';
+    if (effectiveAlt) evt['alt'] = 'true';
+    if (effectiveCommand) evt['command'] = 'true';
     return evt;
   }
 

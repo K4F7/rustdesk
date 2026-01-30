@@ -247,6 +247,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Download new version", ""),
         ("Touch mode", ""),
         ("Mouse mode", ""),
+        ("Canvas edit mode", ""),
         ("One-Finger Tap", ""),
         ("Left Mouse", ""),
         ("One-Long Tap", ""),

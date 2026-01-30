@@ -37,37 +37,65 @@ class GestureIcons {
 }
 
 typedef OnTouchModeChange = void Function(bool);
+typedef OnCanvasEditModeChange = void Function(bool);
+
+String _gestureHelpCanvasEditModeLabel() {
+  final label = translate("Canvas edit mode");
+  if (label != "Canvas edit mode") {
+    return label;
+  }
+  final l = localeName.toLowerCase();
+  if (!l.startsWith('zh')) {
+    return label;
+  }
+  if (l.contains('tw') || l.contains('hant') || l.contains('hk')) {
+    return '畫布編輯模式';
+  }
+  return '画布编辑模式';
+}
 
 class GestureHelp extends StatefulWidget {
   GestureHelp(
       {Key? key,
       required this.touchMode,
       required this.onTouchModeChange,
+      required this.canvasEditMode,
+      required this.onCanvasEditModeChange,
       required this.virtualMouseMode,
       this.inputModel})
       : super(key: key);
   final bool touchMode;
   final OnTouchModeChange onTouchModeChange;
+  final bool canvasEditMode;
+  final OnCanvasEditModeChange onCanvasEditModeChange;
   final VirtualMouseMode virtualMouseMode;
   final InputModel? inputModel;
 
   @override
   State<StatefulWidget> createState() =>
-      _GestureHelpState(touchMode, virtualMouseMode);
+      _GestureHelpState(touchMode, canvasEditMode, virtualMouseMode);
 }
 
 class _GestureHelpState extends State<GestureHelp> {
   late int _selectedIndex;
   late bool _touchMode;
+  late bool _canvasEditMode;
   final VirtualMouseMode _virtualMouseMode;
   double _twoFingerScrollSensitivity = 1.0;
   double _wheelScrollSensitivity = 1.0;
   bool _reverseMouseWheel = false;
+  bool _reverseTwoFingerScroll = false;
 
-  _GestureHelpState(bool touchMode, VirtualMouseMode virtualMouseMode)
+  _GestureHelpState(
+      bool touchMode, bool canvasEditMode, VirtualMouseMode virtualMouseMode)
       : _virtualMouseMode = virtualMouseMode {
     _touchMode = touchMode;
-    _selectedIndex = _touchMode ? 1 : 0;
+    _canvasEditMode = canvasEditMode;
+    if (_canvasEditMode) {
+      _selectedIndex = 2;
+    } else {
+      _selectedIndex = _touchMode ? 1 : 0;
+    }
   }
 
   static const double _minTwoFingerSensitivity = 0.01;
@@ -141,6 +169,30 @@ class _GestureHelpState extends State<GestureHelp> {
     if (sessionId != null) {
       await bind.sessionSetReverseMouseWheel(sessionId: sessionId, value: v);
     }
+    // If the per-source two-finger option is unset, it inherits the mouse wheel
+    // option for backward compatibility. Keep the UI state in sync.
+    final twoFingerRaw =
+        bind.mainGetUserDefaultOption(key: kKeyReverseTwoFingerScroll);
+    if (twoFingerRaw.isEmpty) {
+      setState(() => _reverseTwoFingerScroll = value);
+    }
+  }
+
+  void _loadReverseTwoFingerScroll() {
+    var optionValue =
+        bind.mainGetUserDefaultOption(key: kKeyReverseTwoFingerScroll);
+    if (optionValue.isEmpty) {
+      // Backward compatible: default to the existing reverse mouse wheel option.
+      optionValue = _reverseMouseWheel ? 'Y' : 'N';
+    }
+    setState(() => _reverseTwoFingerScroll = optionValue == 'Y');
+  }
+
+  Future<void> _storeReverseTwoFingerScroll(bool value) async {
+    setState(() => _reverseTwoFingerScroll = value);
+    final v = value ? 'Y' : 'N';
+    await bind.mainSetUserDefaultOption(
+        key: kKeyReverseTwoFingerScroll, value: v);
   }
 
   @override
@@ -149,6 +201,7 @@ class _GestureHelpState extends State<GestureHelp> {
     _loadTwoFingerSensitivity();
     _loadWheelSensitivity();
     _loadReverseMouseWheel();
+    _loadReverseTwoFingerScroll();
   }
 
   /// Helper to exit relative mouse mode when certain conditions are met.
@@ -186,28 +239,41 @@ class _GestureHelpState extends State<GestureHelp> {
                         inactiveFgColor: Colors.white60,
                         activeBgColor: [MyTheme.accent],
                         inactiveBgColor: Theme.of(context).hintColor,
-                        totalSwitches: 2,
+                        totalSwitches: 3,
                         minWidth: 150,
                         fontSize: 15,
                         iconSize: 18,
                         labels: [
                           translate("Mouse mode"),
-                          translate("Touch mode")
+                          translate("Touch mode"),
+                          _gestureHelpCanvasEditModeLabel(),
                         ],
-                        icons: [Icons.mouse, Icons.touch_app],
+                        icons: [Icons.mouse, Icons.touch_app, Icons.crop_free],
                         onToggle: (index) {
                           setState(() {
                             if (_selectedIndex != index) {
                               _selectedIndex = index ?? 0;
-                              _touchMode = index == 0 ? false : true;
-                              widget.onTouchModeChange(_touchMode);
-                              // Exit relative mouse mode when switching to touch mode
-                              _exitRelativeMouseModeIf(_touchMode);
+                              if (_selectedIndex == 2) {
+                                _canvasEditMode = true;
+                                widget.onCanvasEditModeChange(true);
+                                // Exit relative mouse mode when entering canvas edit mode
+                                _exitRelativeMouseModeIf(true);
+                              } else {
+                                _canvasEditMode = false;
+                                widget.onCanvasEditModeChange(false);
+                                final nextTouchMode = _selectedIndex == 1;
+                                if (_touchMode != nextTouchMode) {
+                                  _touchMode = nextTouchMode;
+                                  widget.onTouchModeChange(_touchMode);
+                                  // Exit relative mouse mode when switching to touch mode
+                                  _exitRelativeMouseModeIf(_touchMode);
+                                }
+                              }
                             }
                           });
                         },
                       ),
-                      if (_touchMode)
+                      if (_touchMode && !_canvasEditMode)
                         Padding(
                           padding: const EdgeInsets.only(top: 10.0),
                           child: SizedBox(
@@ -319,6 +385,38 @@ class _GestureHelpState extends State<GestureHelp> {
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
                                       Checkbox(
+                                        value: _reverseTwoFingerScroll,
+                                        onChanged: (widget.inputModel != null &&
+                                                widget
+                                                    .inputModel!.keyboardPerm &&
+                                                !widget.inputModel!.isViewOnly)
+                                            ? (value) {
+                                                if (value == null) return;
+                                                _storeReverseTwoFingerScroll(
+                                                    value);
+                                              }
+                                            : null,
+                                      ),
+                                      InkWell(
+                                        onTap: (widget.inputModel != null &&
+                                                widget
+                                                    .inputModel!.keyboardPerm &&
+                                                !widget.inputModel!.isViewOnly)
+                                            ? () =>
+                                                _storeReverseTwoFingerScroll(
+                                                    !_reverseTwoFingerScroll)
+                                            : null,
+                                        child: const Text('双指滚动反向'),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Transform.translate(
+                                  offset: const Offset(-10.0, 0.0),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Checkbox(
                                         value: _reverseMouseWheel,
                                         onChanged: (widget.inputModel != null &&
                                                 widget
@@ -338,8 +436,7 @@ class _GestureHelpState extends State<GestureHelp> {
                                             ? () => _storeReverseMouseWheel(
                                                 !_reverseMouseWheel)
                                             : null,
-                                        child: Text(
-                                            translate('Reverse mouse wheel')),
+                                        child: const Text('滑轮条反向'),
                                       ),
                                     ],
                                   ),
@@ -377,7 +474,9 @@ class _GestureHelpState extends State<GestureHelp> {
                           ],
                         ),
                       ),
-                      if (_touchMode && _virtualMouseMode.showVirtualMouse)
+                      if (_touchMode &&
+                          !_canvasEditMode &&
+                          _virtualMouseMode.showVirtualMouse)
                         Padding(
                           // Indent "Virtual mouse size"
                           padding: const EdgeInsets.only(left: 24.0),
@@ -427,7 +526,9 @@ class _GestureHelpState extends State<GestureHelp> {
                             ),
                           ),
                         ),
-                      if (!_touchMode && _virtualMouseMode.showVirtualMouse)
+                      if (!_touchMode &&
+                          !_canvasEditMode &&
+                          _virtualMouseMode.showVirtualMouse)
                         Transform.translate(
                           offset: const Offset(-10.0, -12.0),
                           child: Padding(
@@ -468,6 +569,7 @@ class _GestureHelpState extends State<GestureHelp> {
                         ),
                       // Relative mouse mode option - only visible when joystick is shown
                       if (!_touchMode &&
+                          !_canvasEditMode &&
                           _virtualMouseMode.showVirtualMouse &&
                           _virtualMouseMode.showVirtualJoystick &&
                           widget.inputModel != null)
@@ -506,32 +608,12 @@ class _GestureHelpState extends State<GestureHelp> {
                     child: Wrap(
                   spacing: space,
                   runSpacing: 2 * space,
-                  children: _touchMode
+                  children: _canvasEditMode
                       ? [
                           GestureInfo(
                               width,
-                              GestureIcons.iconMobileTouch,
-                              translate("One-Finger Tap"),
-                              translate("Left Mouse")),
-                          GestureInfo(
-                              width,
-                              GestureIcons.iconGesturePressHold,
-                              translate("One-Long Tap"),
-                              translate("Right Mouse")),
-                          GestureInfo(
-                              width,
-                              GestureIcons.iconGestureFSwipeRight,
-                              translate("One-Finger Move"),
-                              translate("Mouse Drag")),
-                          GestureInfo(
-                              width,
-                              GestureIcons.iconGestureFThreeFingers,
-                              translate("Three-Finger vertically"),
-                              translate("Mouse Wheel")),
-                          GestureInfo(
-                              width,
                               GestureIcons.iconGestureFDrag,
-                              translate("Two-Finger Move"),
+                              translate("One-Finger Move"),
                               translate("Canvas Move")),
                           GestureInfo(
                               width,
@@ -539,38 +621,71 @@ class _GestureHelpState extends State<GestureHelp> {
                               translate("Pinch to Zoom"),
                               translate("Canvas Zoom")),
                         ]
-                      : [
-                          GestureInfo(
-                              width,
-                              GestureIcons.iconMobileTouch,
-                              translate("One-Finger Tap"),
-                              translate("Left Mouse")),
-                          GestureInfo(
-                              width,
-                              GestureIcons.iconGesturePressHold,
-                              translate("One-Long Tap"),
-                              translate("Right Mouse")),
-                          GestureInfo(
-                              width,
-                              GestureIcons.iconGestureFSwipeRight,
-                              translate("Double Tap & Move"),
-                              translate("Mouse Drag")),
-                          GestureInfo(
-                              width,
-                              GestureIcons.iconGestureFThreeFingers,
-                              translate("Three-Finger vertically"),
-                              translate("Mouse Wheel")),
-                          GestureInfo(
-                              width,
-                              GestureIcons.iconGestureFDrag,
-                              translate("Two-Finger Move"),
-                              translate("Canvas Move")),
-                          GestureInfo(
-                              width,
-                              GestureIcons.iconGesturePinch,
-                              translate("Pinch to Zoom"),
-                              translate("Canvas Zoom")),
-                        ],
+                      : _touchMode
+                          ? [
+                              GestureInfo(
+                                  width,
+                                  GestureIcons.iconMobileTouch,
+                                  translate("One-Finger Tap"),
+                                  translate("Left Mouse")),
+                              GestureInfo(
+                                  width,
+                                  GestureIcons.iconGesturePressHold,
+                                  translate("One-Long Tap"),
+                                  translate("Right Mouse")),
+                              GestureInfo(
+                                  width,
+                                  GestureIcons.iconGestureFSwipeRight,
+                                  translate("One-Finger Move"),
+                                  translate("Mouse Drag")),
+                              GestureInfo(
+                                  width,
+                                  GestureIcons.iconGestureFThreeFingers,
+                                  translate("Three-Finger vertically"),
+                                  translate("Mouse Wheel")),
+                              GestureInfo(
+                                  width,
+                                  GestureIcons.iconGestureFDrag,
+                                  translate("Two-Finger Move"),
+                                  translate("Canvas Move")),
+                              GestureInfo(
+                                  width,
+                                  GestureIcons.iconGesturePinch,
+                                  translate("Pinch to Zoom"),
+                                  translate("Canvas Zoom")),
+                            ]
+                          : [
+                              GestureInfo(
+                                  width,
+                                  GestureIcons.iconMobileTouch,
+                                  translate("One-Finger Tap"),
+                                  translate("Left Mouse")),
+                              GestureInfo(
+                                  width,
+                                  GestureIcons.iconGesturePressHold,
+                                  translate("One-Long Tap"),
+                                  translate("Right Mouse")),
+                              GestureInfo(
+                                  width,
+                                  GestureIcons.iconGestureFSwipeRight,
+                                  translate("Double Tap & Move"),
+                                  translate("Mouse Drag")),
+                              GestureInfo(
+                                  width,
+                                  GestureIcons.iconGestureFThreeFingers,
+                                  translate("Three-Finger vertically"),
+                                  translate("Mouse Wheel")),
+                              GestureInfo(
+                                  width,
+                                  GestureIcons.iconGestureFDrag,
+                                  translate("Two-Finger Move"),
+                                  translate("Canvas Move")),
+                              GestureInfo(
+                                  width,
+                                  GestureIcons.iconGesturePinch,
+                                  translate("Pinch to Zoom"),
+                                  translate("Canvas Zoom")),
+                            ],
                 )),
               ],
             )));

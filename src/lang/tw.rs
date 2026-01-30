@@ -247,6 +247,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Download new version", "下載新版本"),
         ("Touch mode", "觸控模式"),
         ("Mouse mode", "滑鼠模式"),
+        ("Canvas edit mode", "畫布編輯模式"),
         ("One-Finger Tap", "單指輕觸"),
         ("Left Mouse", "滑鼠左鍵"),
         ("One-Long Tap", "單指長按"),

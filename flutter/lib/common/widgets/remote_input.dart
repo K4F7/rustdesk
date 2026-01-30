@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -7,6 +8,7 @@ import 'package:flutter/gestures.dart';
 
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/common.dart';
+import 'package:flutter_hbb/common/wheel_reverse.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/models/model.dart';
 import 'package:flutter_hbb/models/input_model.dart';
@@ -88,6 +90,15 @@ class RawTouchGestureDetectorRegion extends StatefulWidget {
 ///   HoldDrag -> left drag
 class _RawTouchGestureDetectorRegionState
     extends State<RawTouchGestureDetectorRegion> {
+  static const double _separatedCtrlWheelMinSepXFraction = 0.60;
+  static const int _separatedCtrlWheelDecideWindowMs = 80;
+  static const double _edgeCtrlWheelDeadzoneBasePx = 14.0;
+  static const double _edgeCtrlWheelPixelsPerStepBasePx = 12.0;
+  static const double _edgeCtrlWheelDprBaseline = 2.75;
+  static const double _edgeCtrlWheelDprClampMin = 0.75;
+  static const double _edgeCtrlWheelDprClampMax = 1.25;
+  static const String _gestureDiagLogName = 'gesture_diag';
+
   Offset _cacheLongPressPosition = Offset(0, 0);
   // Timestamp of the last long press event.
   int _cacheLongPressPositionTs = 0;
@@ -97,6 +108,22 @@ class _RawTouchGestureDetectorRegionState
   Offset _twoFingerWheelLockedPos = Offset.zero;
   Offset _twoFingerWheelLastFocal = Offset.zero;
   double _twoFingerWheelIntegral = 0.0;
+  bool _twoFingerEdgeCtrlWheelCandidate = false;
+  bool _twoFingerEdgeCtrlWheelActive = false;
+  int? _edgeCtrlLeftPointer;
+  int? _edgeCtrlRightPointer;
+  Offset _edgeCtrlWheelAnchorPos = Offset.zero;
+  bool _sepCtrlWheelCtrlHeld = false;
+  double _edgeCtrlWheelDeadzonePx = _edgeCtrlWheelDeadzoneBasePx;
+  double _edgeCtrlWheelPixelsPerStep = _edgeCtrlWheelPixelsPerStepBasePx;
+  int _edgeCtrlWheelDecideUntilTs = 0;
+  double _edgeCtrlOutwardAccum = 0.0;
+  double _edgeCtrlInwardAccum = 0.0;
+  double _edgeCtrlAbsDyAccum = 0.0;
+  double _edgeCtrlOutIntegral = 0.0;
+  bool _gestureDiagInitLogged = false;
+
+  int _suppressSingleTouchUntilTs = 0;
 
   bool _leftDragActive = false;
   bool _leftDragMoved = false;
@@ -115,6 +142,8 @@ class _RawTouchGestureDetectorRegionState
   // `onDoubleTap()` does not provide the position of the tap event.
   Offset _lastPosOfDoubleTapDown = Offset.zero;
   bool _touchModePanStarted = false;
+  bool _canvasEditOneFingerPanStarted = false;
+  bool _canvasEditTwoFingerActive = false;
   Offset _doubleFinerTapPosition = Offset.zero;
 
   // For mouse mode, we need to block the events when the cursor is in a blocked area.
@@ -124,8 +153,39 @@ class _RawTouchGestureDetectorRegionState
   FFI get ffi => widget.ffi;
   FfiModel get ffiModel => widget.ffiModel;
   InputModel get inputModel => widget.inputModel;
-  bool get handleTouch => (isDesktop || isWebDesktop) || ffiModel.touchMode;
+  bool get isCanvasEditMode => ffiModel.canvasEditMode;
+  bool get handleTouch =>
+      (isDesktop || isWebDesktop) || (ffiModel.touchMode && !isCanvasEditMode);
   SessionID get sessionId => ffi.sessionId;
+
+  bool _isSingleTouchSuppressed() =>
+      DateTime.now().millisecondsSinceEpoch < _suppressSingleTouchUntilTs;
+
+  void _suppressSingleTouch([int ms = 150]) {
+    final until = DateTime.now().millisecondsSinceEpoch + ms;
+    if (until > _suppressSingleTouchUntilTs) {
+      _suppressSingleTouchUntilTs = until;
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _gestureDiagInitLogged) return;
+      _gestureDiagInitLogged = true;
+      final size = _gestureRegionSize();
+      _gestureDiag('remote_input_region_ready', {
+        'size_w': size.width,
+        'size_h': size.height,
+        'dpr': MediaQueryData.fromView(View.of(context)).devicePixelRatio,
+        'is_android': isAndroid,
+        'handle_touch': handleTouch,
+        'peer_mobile': ffiModel.isPeerMobile,
+        'is_camera': widget.isCamera,
+      });
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -152,6 +212,12 @@ class _RawTouchGestureDetectorRegionState
     if (isNotTouchBasedDevice()) {
       return;
     }
+    if (_isSingleTouchSuppressed()) {
+      return;
+    }
+    if (isCanvasEditMode) {
+      return;
+    }
     if (handleTouch) {
       _lastPosOfDoubleTapDown = d.localPosition;
       // Desktop or mobile "Touch mode"
@@ -165,6 +231,12 @@ class _RawTouchGestureDetectorRegionState
     final TapDownDetails? lastTapDownDetails = _lastTapDownDetails;
     _lastTapDownDetails = null;
     if (isNotTouchBasedDevice()) {
+      return;
+    }
+    if (_isSingleTouchSuppressed()) {
+      return;
+    }
+    if (isCanvasEditMode) {
       return;
     }
     if (handleTouch) {
@@ -190,6 +262,12 @@ class _RawTouchGestureDetectorRegionState
     if (isNotTouchBasedDevice()) {
       return;
     }
+    if (_isSingleTouchSuppressed()) {
+      return;
+    }
+    if (isCanvasEditMode) {
+      return;
+    }
     if (!handleTouch) {
       // Cannot use `_lastTapDownDetails` because Flutter calls `onTapUp` before `onTap`, clearing the cached details.
       // Using `_lastTapDownPositionForMouseMode` instead.
@@ -206,6 +284,9 @@ class _RawTouchGestureDetectorRegionState
     if (isNotTouchBasedDevice()) {
       return;
     }
+    if (isCanvasEditMode) {
+      return;
+    }
     if (handleTouch) {
       _lastPosOfDoubleTapDown = d.localPosition;
       await ffi.cursorModel.move(d.localPosition.dx, d.localPosition.dy);
@@ -216,6 +297,9 @@ class _RawTouchGestureDetectorRegionState
 
   onDoubleTap() async {
     if (isNotTouchBasedDevice()) {
+      return;
+    }
+    if (isCanvasEditMode) {
       return;
     }
     if (ffiModel.touchMode && ffi.cursorModel.lastIsBlocked) {
@@ -240,6 +324,9 @@ class _RawTouchGestureDetectorRegionState
     if (isNotTouchBasedDevice()) {
       return;
     }
+    if (isCanvasEditMode) {
+      return;
+    }
     if (handleTouch) {
       _lastPosOfDoubleTapDown = d.localPosition;
       _cacheLongPressPosition = d.localPosition;
@@ -259,6 +346,9 @@ class _RawTouchGestureDetectorRegionState
 
   onLongPressUp() async {
     if (isNotTouchBasedDevice()) {
+      return;
+    }
+    if (isCanvasEditMode) {
       return;
     }
     if (handleTouch) {
@@ -294,6 +384,9 @@ class _RawTouchGestureDetectorRegionState
   // for mobiles
   onLongPress() async {
     if (isNotTouchBasedDevice()) {
+      return;
+    }
+    if (isCanvasEditMode) {
       return;
     }
     if (!ffi.ffiModel.isPeerMobile) {
@@ -334,6 +427,9 @@ class _RawTouchGestureDetectorRegionState
   onLongPressMoveUpdate(LongPressMoveUpdateDetails d) async {
     if (!ffiModel.isPeerMobile || isNotTouchBasedDevice()) {
       if (isNotTouchBasedDevice()) {
+        return;
+      }
+      if (isCanvasEditMode) {
         return;
       }
       if (!handleTouch || !_rightHoldActive) {
@@ -396,6 +492,14 @@ class _RawTouchGestureDetectorRegionState
     if (isNotTouchBasedDevice()) {
       return;
     }
+    if (isCanvasEditMode) {
+      return;
+    }
+
+    final isMobileTouchMode = isMobile && ffiModel.touchMode;
+    if (isMobileTouchMode && _shouldUseTwoFingerRemoteWheelOrZoom()) {
+      return;
+    }
 
     // mobile mouse mode or desktop touch screen
     final isMobileMouseMode = isMobile && !ffiModel.touchMode;
@@ -412,6 +516,9 @@ class _RawTouchGestureDetectorRegionState
     if (isNotTouchBasedDevice()) {
       return;
     }
+    if (isCanvasEditMode) {
+      return;
+    }
     if (!handleTouch) {
       if (isSpecialHoldDragActive) return;
       await inputModel.sendMouse('down', MouseButtons.left);
@@ -420,6 +527,9 @@ class _RawTouchGestureDetectorRegionState
 
   onHoldDragUpdate(DragUpdateDetails d) async {
     if (isNotTouchBasedDevice()) {
+      return;
+    }
+    if (isCanvasEditMode) {
       return;
     }
     if (!handleTouch) {
@@ -432,6 +542,9 @@ class _RawTouchGestureDetectorRegionState
     if (isNotTouchBasedDevice()) {
       return;
     }
+    if (isCanvasEditMode) {
+      return;
+    }
     if (!handleTouch) {
       await inputModel.sendMouse('up', MouseButtons.left);
     }
@@ -442,6 +555,21 @@ class _RawTouchGestureDetectorRegionState
     _lastTapDownDetails = null;
     lastDeviceKind = d.kind ?? lastDeviceKind;
     if (isNotTouchBasedDevice()) {
+      return;
+    }
+    if (_isSingleTouchSuppressed()) {
+      return;
+    }
+    if (isCanvasEditMode) {
+      if (ffi.cursorModel.shouldBlock(d.localPosition.dx, d.localPosition.dy)) {
+        _canvasEditOneFingerPanStarted = false;
+        return;
+      }
+      if (!ffi.cursorModel.isInRemoteRect(d.localPosition)) {
+        _canvasEditOneFingerPanStarted = false;
+        return;
+      }
+      _canvasEditOneFingerPanStarted = true;
       return;
     }
     if (handleTouch) {
@@ -506,6 +634,17 @@ class _RawTouchGestureDetectorRegionState
     if (isNotTouchBasedDevice()) {
       return;
     }
+    if (isCanvasEditMode) {
+      if (!_canvasEditOneFingerPanStarted) {
+        return;
+      }
+      if (ffi.cursorModel.shouldBlock(d.localPosition.dx, d.localPosition.dy)) {
+        return;
+      }
+      ffi.canvasModel.panX(d.delta.dx);
+      ffi.canvasModel.panY(d.delta.dy);
+      return;
+    }
     if (ffi.cursorModel.shouldBlock(d.localPosition.dx, d.localPosition.dy)) {
       return;
     }
@@ -533,7 +672,11 @@ class _RawTouchGestureDetectorRegionState
 
   onOneFingerPanEnd(DragEndDetails d) async {
     _touchModePanStarted = false;
+    _canvasEditOneFingerPanStarted = false;
     if (isNotTouchBasedDevice()) {
+      return;
+    }
+    if (isCanvasEditMode) {
       return;
     }
     if (isDesktop || isWebDesktop) {
@@ -565,40 +708,314 @@ class _RawTouchGestureDetectorRegionState
     return v.clamp(0.01, 5.0);
   }
 
-  void _twoFingerWheelScrollByDelta(double deltaDy) {
+  bool _shouldUseTwoFingerRemoteWheelOrZoom() {
+    // Map two-finger gestures to remote wheel when controlling a non-mobile
+    // peer. This is useful both on mobile touch mode and on desktop touchscreens.
+    return handleTouch && !ffiModel.isPeerMobile && !widget.isCamera;
+  }
+
+  double _edgeCtrlWheelDpiFactor() {
+    final dpr = MediaQueryData.fromView(View.of(context)).devicePixelRatio;
+    if (dpr <= 0) return 1.0;
+    return (_edgeCtrlWheelDprBaseline / dpr)
+        .clamp(_edgeCtrlWheelDprClampMin, _edgeCtrlWheelDprClampMax);
+  }
+
+  Size _gestureRegionSize() {
+    final ro = context.findRenderObject();
+    if (ro is RenderBox && ro.hasSize) {
+      return ro.size;
+    }
+    return MediaQueryData.fromView(View.of(context)).size;
+  }
+
+  void _gestureDiag(String event, [Map<String, Object?>? data]) {
+    // Low-volume diagnostics visible in `adb logcat`, even in release builds.
+    // Avoid per-frame spam: only log state transitions / one-shot decisions.
+    final payload = data == null ? '' : ' ${json.encode(data)}';
+    // Most reliable for logcat visibility.
+    // Use `print` to ensure it shows up under I/flutter in release/profile too.
+    print('[$_gestureDiagLogName] $event$payload');
+    // Structured log record (may be filtered differently on some builds).
+    developer.log('$event$payload', name: _gestureDiagLogName);
+  }
+
+  void _setSepCtrlWheelCtrlHeld(bool held) {
+    if (_sepCtrlWheelCtrlHeld == held) return;
+    if (!inputModel.keyboardPerm) {
+      _gestureDiag('sep_ctrl_wheel_ctrl_denied', {
+        'keyboardPerm': inputModel.keyboardPerm,
+      });
+      return;
+    }
+    inputModel.inputKey('VK_CONTROL', down: held, press: false);
+    _sepCtrlWheelCtrlHeld = held;
+    _gestureDiag('sep_ctrl_wheel_ctrl_${held ? 'down' : 'up'}');
+  }
+
+  bool _getReverseMouseWheel() {
+    var optionValue =
+        bind.sessionGetReverseMouseWheelSync(sessionId: inputModel.sessionId) ??
+            '';
+    if (optionValue.isEmpty) {
+      optionValue = bind.mainGetUserDefaultOption(key: kKeyReverseMouseWheel);
+    }
+    return optionValue == 'Y';
+  }
+
+  bool _getReverseTwoFingerScroll() {
+    var optionValue =
+        bind.mainGetUserDefaultOption(key: kKeyReverseTwoFingerScroll);
+    if (optionValue.isEmpty) {
+      // Backward compatible: default to the existing reverse mouse wheel option.
+      return _getReverseMouseWheel();
+    }
+    return optionValue == 'Y';
+  }
+
+  int _getTwoFingerWheelReverseFactor() {
+    final reverseWheel = _getReverseMouseWheel();
+    final reverseTwoFinger = _getReverseTwoFingerScroll();
+    return wheelStepWithReverseCompensation(
+      step: 1,
+      globalReverse: reverseWheel,
+      sourceReverse: reverseTwoFinger,
+    );
+  }
+
+  Future<void> _twoFingerWheelScrollByDelta(double deltaDy) async {
     final sensitivity = _getAndroidTwoFingerWheelSensitivity();
     _twoFingerWheelIntegral += (-deltaDy) / 4 * sensitivity;
+    // Read reverse options dynamically so changes take effect immediately
+    // without requiring the user to lift and re-start a two-finger gesture.
+    final reverseFactor = _getTwoFingerWheelReverseFactor();
+
+    final lockedPos = _twoFingerWheelLockedPos;
+    if (!ffi.cursorModel.shouldBlock(lockedPos.dx, lockedPos.dy) &&
+        ffi.cursorModel.isInRemoteRect(lockedPos)) {
+      await ffi.cursorModel.move(lockedPos.dx, lockedPos.dy);
+    }
     while (_twoFingerWheelIntegral >= 1) {
-      inputModel.scroll(1);
+      final step = 1 * reverseFactor;
+      await inputModel.scroll(step);
       _twoFingerWheelIntegral -= 1;
       RemoteInputEventLog.add(
         'wheel_v',
         data: {
           'x': _twoFingerWheelLockedPos.dx.round(),
           'y': _twoFingerWheelLockedPos.dy.round(),
-          'dir': 'down',
-          'step': 1,
+          'dir': step > 0 ? 'down' : 'up',
+          'step': step,
         },
       );
     }
     while (_twoFingerWheelIntegral <= -1) {
-      inputModel.scroll(-1);
+      final step = -1 * reverseFactor;
+      await inputModel.scroll(step);
       _twoFingerWheelIntegral += 1;
       RemoteInputEventLog.add(
         'wheel_v',
         data: {
           'x': _twoFingerWheelLockedPos.dx.round(),
           'y': _twoFingerWheelLockedPos.dy.round(),
-          'dir': 'up',
-          'step': -1,
+          'dir': step > 0 ? 'down' : 'up',
+          'step': step,
         },
       );
     }
   }
 
-  onTwoFingerScaleStart(ScaleStartDetails d) async {
+  bool _isSeparatedCtrlWheelStart(TwoFingerScaleStartDetails d) {
+    if (!isAndroid) return false;
+    final size = _gestureRegionSize();
+    if (size.width <= 0) return false;
+
+    final aX = d.pointerALocalPosition.dx;
+    final bX = d.pointerBLocalPosition.dx;
+    final sepX = (aX - bX).abs();
+    final minSepX = size.width * _separatedCtrlWheelMinSepXFraction;
+    if (sepX < minSepX) {
+      _gestureDiag('sep_ctrl_wheel_reject_sep', {
+        'w': size.width,
+        'sep_x': sepX,
+        'min_sep_x': minSepX,
+        'a_x': aX,
+        'b_x': bX,
+      });
+      return false;
+    }
+
+    final inOppositeHalves = (aX < size.width / 2 && bX > size.width / 2) ||
+        (bX < size.width / 2 && aX > size.width / 2);
+    if (!inOppositeHalves) {
+      _gestureDiag('sep_ctrl_wheel_reject_halves', {
+        'w': size.width,
+        'a_x': aX,
+        'b_x': bX,
+      });
+      return false;
+    }
+
+    final leftPointer = aX <= bX ? d.pointerA : d.pointerB;
+    final rightPointer = aX <= bX ? d.pointerB : d.pointerA;
+
+    _twoFingerEdgeCtrlWheelCandidate = true;
+    _twoFingerEdgeCtrlWheelActive = false;
+    _edgeCtrlLeftPointer = leftPointer;
+    _edgeCtrlRightPointer = rightPointer;
+    _edgeCtrlWheelAnchorPos = d.localFocalPoint;
+    final factor = _edgeCtrlWheelDpiFactor();
+    _edgeCtrlWheelDeadzonePx = _edgeCtrlWheelDeadzoneBasePx * factor;
+    _edgeCtrlWheelPixelsPerStep = _edgeCtrlWheelPixelsPerStepBasePx * factor;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    _edgeCtrlWheelDecideUntilTs = now + _separatedCtrlWheelDecideWindowMs;
+    _edgeCtrlOutwardAccum = 0.0;
+    _edgeCtrlInwardAccum = 0.0;
+    _edgeCtrlAbsDyAccum = 0.0;
+    _edgeCtrlOutIntegral = 0.0;
+    RemoteInputEventLog.add(
+      'sep_ctrl_wheel_candidate',
+      data: {
+        'w': size.width.round(),
+        'sep_x': sepX.round(),
+        'min_sep_x': (size.width * _separatedCtrlWheelMinSepXFraction).round(),
+        'decide_ms': _separatedCtrlWheelDecideWindowMs,
+        'deadzone_px': _edgeCtrlWheelDeadzonePx.round(),
+        'px_per_step': _edgeCtrlWheelPixelsPerStep.toStringAsFixed(2),
+        'a_x': d.pointerALocalPosition.dx.round(),
+        'b_x': d.pointerBLocalPosition.dx.round(),
+      },
+    );
+    _gestureDiag('sep_ctrl_wheel_candidate', {
+      'w': size.width,
+      'sep_x': sepX,
+      'min_sep_x': size.width * _separatedCtrlWheelMinSepXFraction,
+      'decide_ms': _separatedCtrlWheelDecideWindowMs,
+      'a_x': d.pointerALocalPosition.dx,
+      'b_x': d.pointerBLocalPosition.dx,
+      'dpr': MediaQueryData.fromView(View.of(context)).devicePixelRatio,
+      'deadzone_px': _edgeCtrlWheelDeadzonePx,
+      'px_per_step': _edgeCtrlWheelPixelsPerStep,
+    });
+    return true;
+  }
+
+  Future<void> _sendCtrlWheelStep(int step, Offset anchor) async {
+    // Keep the anchor stable to avoid zooming at a drifting cursor location.
+    if (!ffi.cursorModel.shouldBlock(anchor.dx, anchor.dy) &&
+        ffi.cursorModel.isInRemoteRect(anchor)) {
+      await ffi.cursorModel.move(anchor.dx, anchor.dy);
+    }
+    await inputModel.scroll(step);
+  }
+
+  Future<bool> _handleEdgeCtrlWheelUpdate(TwoFingerScaleUpdateDetails d) async {
+    if (!_twoFingerEdgeCtrlWheelCandidate) return false;
+    final leftPointer = _edgeCtrlLeftPointer;
+    final rightPointer = _edgeCtrlRightPointer;
+    if (leftPointer == null || rightPointer == null) return false;
+
+    Offset deltaOf(int pointer) {
+      if (pointer == d.pointerA) return d.pointerADelta;
+      if (pointer == d.pointerB) return d.pointerBDelta;
+      return Offset.zero;
+    }
+
+    final leftDeltaX = deltaOf(leftPointer).dx;
+    final rightDeltaX = deltaOf(rightPointer).dx;
+    final leftDeltaY = deltaOf(leftPointer).dy;
+    final rightDeltaY = deltaOf(rightPointer).dy;
+
+    final outwardDelta = max(0.0, -leftDeltaX) + max(0.0, rightDeltaX);
+    final inwardDelta = max(0.0, leftDeltaX) + max(0.0, -rightDeltaX);
+    _edgeCtrlOutwardAccum += outwardDelta;
+    _edgeCtrlInwardAccum += inwardDelta;
+    _edgeCtrlAbsDyAccum += leftDeltaY.abs() + rightDeltaY.abs();
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final horiz = max(_edgeCtrlOutwardAccum, _edgeCtrlInwardAccum);
+    final vert = _edgeCtrlAbsDyAccum;
+    const dominance = 1.2;
+
+    if (!_twoFingerEdgeCtrlWheelActive) {
+      // Decide early if it clearly looks like a normal two-finger scroll.
+      if (vert >= _edgeCtrlWheelDeadzonePx && vert > dominance * horiz) {
+        _gestureDiag('sep_ctrl_wheel_fallback_scroll', {
+          'vert': vert,
+          'horiz': horiz,
+          'deadzone_px': _edgeCtrlWheelDeadzonePx,
+        });
+        _twoFingerEdgeCtrlWheelCandidate = false;
+        return false;
+      }
+
+      // Decide early if it clearly looks like an outward/inward split gesture.
+      if (horiz >= _edgeCtrlWheelDeadzonePx && horiz > dominance * vert) {
+        _twoFingerEdgeCtrlWheelActive = true;
+        _setSepCtrlWheelCtrlHeld(true);
+        RemoteInputEventLog.add(
+          'sep_ctrl_wheel_active',
+          data: {
+            'dir': _edgeCtrlOutwardAccum >= _edgeCtrlInwardAccum ? 'out' : 'in'
+          },
+        );
+        _gestureDiag('sep_ctrl_wheel_active', {
+          'dir': _edgeCtrlOutwardAccum >= _edgeCtrlInwardAccum ? 'out' : 'in',
+          'vert': vert,
+          'horiz': horiz,
+          'deadzone_px': _edgeCtrlWheelDeadzonePx,
+        });
+        final excess = horiz - _edgeCtrlWheelDeadzonePx;
+        if (excess > 0) {
+          final sign =
+              _edgeCtrlOutwardAccum >= _edgeCtrlInwardAccum ? 1.0 : -1.0;
+          _edgeCtrlOutIntegral += sign * (excess / _edgeCtrlWheelPixelsPerStep);
+        }
+        _edgeCtrlOutwardAccum = 0.0;
+        _edgeCtrlInwardAccum = 0.0;
+        _edgeCtrlAbsDyAccum = 0.0;
+      } else {
+        // Within the decide window, swallow updates so default wheel doesn't
+        // steal the gesture on incidental vertical movement.
+        if (now <= _edgeCtrlWheelDecideUntilTs) {
+          return true;
+        }
+        // Default to normal wheel after timeout.
+        _gestureDiag('sep_ctrl_wheel_timeout_fallback_scroll', {
+          'vert': vert,
+          'horiz': horiz,
+          'deadzone_px': _edgeCtrlWheelDeadzonePx,
+        });
+        _twoFingerEdgeCtrlWheelCandidate = false;
+        return false;
+      }
+    }
+
+    final signedDelta = outwardDelta - inwardDelta;
+    _edgeCtrlOutIntegral += signedDelta / _edgeCtrlWheelPixelsPerStep;
+    while (_edgeCtrlOutIntegral >= 1.0) {
+      await _sendCtrlWheelStep(-1, _edgeCtrlWheelAnchorPos);
+      _edgeCtrlOutIntegral -= 1.0;
+    }
+    while (_edgeCtrlOutIntegral <= -1.0) {
+      await _sendCtrlWheelStep(1, _edgeCtrlWheelAnchorPos);
+      _edgeCtrlOutIntegral += 1.0;
+    }
+    return true;
+  }
+
+  onTwoFingerScaleStartEx(TwoFingerScaleStartDetails d) async {
     _lastTapDownDetails = null;
     if (isNotTouchBasedDevice()) {
+      return;
+    }
+    if (isCanvasEditMode) {
+      _suppressSingleTouch();
+      _scale = 1;
+      _canvasEditTwoFingerActive =
+          ffi.cursorModel.isInRemoteRect(d.localFocalPoint) &&
+              !ffi.cursorModel
+                  .shouldBlock(d.localFocalPoint.dx, d.localFocalPoint.dy);
       return;
     }
     if (isSpecialHoldDragActive) {
@@ -607,37 +1024,67 @@ class _RawTouchGestureDetectorRegionState
       return;
     }
 
-    // Android remote session: replace pinch-to-zoom with two-finger wheel.
-    if (isAndroid && handleTouch && !widget.isCamera) {
+    if (_shouldUseTwoFingerRemoteWheelOrZoom()) {
+      _suppressSingleTouch();
+      _setSepCtrlWheelCtrlHeld(false);
+      _twoFingerEdgeCtrlWheelCandidate = false;
+      _twoFingerEdgeCtrlWheelActive = false;
+      _edgeCtrlLeftPointer = null;
+      _edgeCtrlRightPointer = null;
+      if (_isSeparatedCtrlWheelStart(d)) {
+        _twoFingerWheelActive = false;
+        return;
+      }
       _twoFingerWheelActive = true;
       _twoFingerWheelIntegral = 0.0;
       _twoFingerWheelLockedPos = d.localFocalPoint;
       _twoFingerWheelLastFocal = d.localFocalPoint;
-      if (!ffi.cursorModel.isInRemoteRect(_twoFingerWheelLockedPos) ||
-          ffi.cursorModel.shouldBlock(
-              _twoFingerWheelLockedPos.dx, _twoFingerWheelLockedPos.dy)) {
+      if (!ffi.cursorModel.isInRemoteRect(_twoFingerWheelLockedPos)) {
         _twoFingerWheelActive = false;
         return;
       }
-      await ffi.cursorModel
-          .move(_twoFingerWheelLockedPos.dx, _twoFingerWheelLockedPos.dy);
+      // If the start point is blocked by an overlay (e.g. wheel slider), still
+      // allow two-finger scroll to work; just avoid moving the cursor there.
+      if (!ffi.cursorModel.shouldBlock(
+          _twoFingerWheelLockedPos.dx, _twoFingerWheelLockedPos.dy)) {
+        await ffi.cursorModel
+            .move(_twoFingerWheelLockedPos.dx, _twoFingerWheelLockedPos.dy);
+      }
     }
   }
 
-  onTwoFingerScaleUpdate(ScaleUpdateDetails d) async {
+  onTwoFingerScaleUpdateEx(TwoFingerScaleUpdateDetails d) async {
     if (isNotTouchBasedDevice()) {
       return;
     }
-
-    // Android remote session: two-finger wheel (no scale/pan).
-    if (isAndroid && handleTouch && _twoFingerWheelActive && !widget.isCamera) {
-      final delta = d.localFocalPoint - _twoFingerWheelLastFocal;
-      _twoFingerWheelLastFocal = d.localFocalPoint;
-      _twoFingerWheelScrollByDelta(delta.dy);
+    if (isCanvasEditMode) {
+      if (!_canvasEditTwoFingerActive) {
+        return;
+      }
+      // mobile
+      ffi.canvasModel.updateScale(d.scale / _scale, d.focalPoint);
+      _scale = d.scale;
+      ffi.canvasModel.panX(d.focalPointDelta.dx);
+      ffi.canvasModel.panY(d.focalPointDelta.dy);
       return;
     }
-    // Android: pinch-to-zoom is removed for the remote session (Milestone 1).
-    // Two-finger gestures should not scale/pan the canvas.
+
+    if (_shouldUseTwoFingerRemoteWheelOrZoom() &&
+        (isAndroid &&
+            (_twoFingerEdgeCtrlWheelCandidate ||
+                _twoFingerEdgeCtrlWheelActive))) {
+      final handled = await _handleEdgeCtrlWheelUpdate(d);
+      if (handled) return;
+    }
+
+    // Mobile remote session: two-finger wheel.
+    if (_shouldUseTwoFingerRemoteWheelOrZoom() && _twoFingerWheelActive) {
+      final delta = d.localFocalPoint - _twoFingerWheelLastFocal;
+      _twoFingerWheelLastFocal = d.localFocalPoint;
+      await _twoFingerWheelScrollByDelta(delta.dy);
+      return;
+    }
+    // Android: keep two-finger gestures reserved for remote wheel/zoom above.
     if (isAndroid && !widget.isCamera && !isSpecialHoldDragActive) {
       return;
     }
@@ -672,13 +1119,31 @@ class _RawTouchGestureDetectorRegionState
     }
   }
 
-  onTwoFingerScaleEnd(ScaleEndDetails d) async {
+  onTwoFingerScaleEndEx(TwoFingerScaleEndDetails d) async {
     if (isNotTouchBasedDevice()) {
       return;
     }
-    if (isAndroid && !widget.isCamera && !isSpecialHoldDragActive) {
+    if (isCanvasEditMode) {
+      _suppressSingleTouch();
+      _canvasEditTwoFingerActive = false;
+      _scale = 1;
+      return;
+    }
+    if (_shouldUseTwoFingerRemoteWheelOrZoom()) {
+      _suppressSingleTouch();
+      _setSepCtrlWheelCtrlHeld(false);
       _twoFingerWheelActive = false;
       _twoFingerWheelIntegral = 0.0;
+      _twoFingerEdgeCtrlWheelCandidate = false;
+      _twoFingerEdgeCtrlWheelActive = false;
+      _edgeCtrlLeftPointer = null;
+      _edgeCtrlRightPointer = null;
+      _edgeCtrlWheelAnchorPos = Offset.zero;
+      _edgeCtrlWheelDecideUntilTs = 0;
+      _edgeCtrlOutwardAccum = 0.0;
+      _edgeCtrlInwardAccum = 0.0;
+      _edgeCtrlAbsDyAccum = 0.0;
+      _edgeCtrlOutIntegral = 0.0;
       _scale = 1;
       return;
     }
@@ -703,6 +1168,9 @@ class _RawTouchGestureDetectorRegionState
   get onThreeFingerVerticalDragUpdate => ffi.ffiModel.isPeerAndroid
       ? null
       : (d) {
+          if (isCanvasEditMode) {
+            return;
+          }
           _mouseScrollIntegral += d.delta.dy / 4;
           if (_mouseScrollIntegral > 1) {
             inputModel.scroll(1);
@@ -764,9 +1232,9 @@ class _RawTouchGestureDetectorRegionState
         instance
           ..onOneFingerPanUpdate = onOneFingerPanUpdate
           ..onOneFingerPanEnd = onOneFingerPanEnd
-          ..onTwoFingerScaleStart = onTwoFingerScaleStart
-          ..onTwoFingerScaleUpdate = onTwoFingerScaleUpdate
-          ..onTwoFingerScaleEnd = onTwoFingerScaleEnd
+          ..onTwoFingerScaleStartEx = onTwoFingerScaleStartEx
+          ..onTwoFingerScaleUpdateEx = onTwoFingerScaleUpdateEx
+          ..onTwoFingerScaleEndEx = onTwoFingerScaleEndEx
           ..onThreeFingerVerticalDragUpdate = onThreeFingerVerticalDragUpdate;
       }),
     };

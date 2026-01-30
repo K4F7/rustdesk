@@ -134,6 +134,7 @@ const String kOptionDisableClipboard = "disable_clipboard";
 const String kOptionLockAfterSessionEnd = "lock_after_session_end";
 const String kOptionPrivacyMode = "privacy_mode";
 const String kOptionTouchMode = "touch-mode";
+const String kOptionCanvasEditMode = "canvas-edit-mode";
 const String kOptionI444 = "i444";
 const String kOptionSwapLeftRightMouse = "swap-left-right-mouse";
 const String kOptionCodecPreference = "codec-preference";
@@ -196,8 +197,10 @@ const String kOptionDisableFloatingWindow = "disable-floating-window";
 
 const String kOptionKeepScreenOn = "keep-screen-on";
 
-const String kOptionKeepAwakeDuringIncomingSessions = "keep-awake-during-incoming-sessions";
-const String kOptionKeepAwakeDuringOutgoingSessions = "keep-awake-during-outgoing-sessions";
+const String kOptionKeepAwakeDuringIncomingSessions =
+    "keep-awake-during-incoming-sessions";
+const String kOptionKeepAwakeDuringOutgoingSessions =
+    "keep-awake-during-outgoing-sessions";
 
 const String kOptionShowMobileAction = "showMobileActions";
 
@@ -207,6 +210,8 @@ const String kAndroidTwoFingerScrollSensitivity =
     "android-two-finger-scroll-sensitivity";
 const String kAndroidWheelScrollSensitivity =
     "android-wheel-scroll-sensitivity";
+const String kAndroidRemoteWheelSliderVertical =
+    "android-remote-wheel-slider-vertical";
 const String kAndroidRemoteShortcuts = "android-remote-shortcuts";
 const String kAndroidRemoteShortcutsVisible =
     "allow-android-remote-shortcuts-visible";
@@ -239,6 +244,7 @@ const String kKeyUseAllMyDisplaysForTheRemoteSession =
     'use_all_my_displays_for_the_remote_session';
 const String kKeyShowMonitorsToolbar = 'show_monitors_toolbar';
 const String kKeyReverseMouseWheel = "reverse_mouse_wheel";
+const String kKeyReverseTwoFingerScroll = "reverse_two_finger_scroll";
 
 const String kMsgboxTextWaitingForImage = 'Connected, waiting for image...';
 
