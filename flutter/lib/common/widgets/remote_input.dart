@@ -695,6 +695,14 @@ class _RawTouchGestureDetectorRegionState
         .clamp(_edgeCtrlWheelDprClampMin, _edgeCtrlWheelDprClampMax);
   }
 
+  Size _gestureRegionSize() {
+    final ro = context.findRenderObject();
+    if (ro is RenderBox && ro.hasSize) {
+      return ro.size;
+    }
+    return MediaQueryData.fromView(View.of(context)).size;
+  }
+
   bool _getReverseMouseWheel() {
     var optionValue =
         bind.sessionGetReverseMouseWheelSync(sessionId: inputModel.sessionId) ??
@@ -769,7 +777,7 @@ class _RawTouchGestureDetectorRegionState
 
   bool _isEdgeCtrlWheelStart(TwoFingerScaleStartDetails d) {
     if (!isAndroid) return false;
-    final size = MediaQueryData.fromView(View.of(context)).size;
+    final size = _gestureRegionSize();
     if (size.width <= 0) return false;
     final zoneWidth = size.width * _edgeCtrlWheelSideZoneFraction;
     if (zoneWidth <= 0) return false;
@@ -799,6 +807,17 @@ class _RawTouchGestureDetectorRegionState
     _edgeCtrlLeftOutAccum = 0.0;
     _edgeCtrlRightOutAccum = 0.0;
     _edgeCtrlOutIntegral = 0.0;
+    RemoteInputEventLog.add(
+      'edge_ctrl_wheel_candidate',
+      data: {
+        'w': size.width.round(),
+        'zone_w': zoneWidth.round(),
+        'deadzone_px': _edgeCtrlWheelDeadzonePx.round(),
+        'px_per_step': _edgeCtrlWheelPixelsPerStep.toStringAsFixed(2),
+        'a_x': d.pointerALocalPosition.dx.round(),
+        'b_x': d.pointerBLocalPosition.dx.round(),
+      },
+    );
     return true;
   }
 
@@ -842,6 +861,7 @@ class _RawTouchGestureDetectorRegionState
           _edgeCtrlRightOutAccum >= _edgeCtrlWheelDeadzonePx) {
         _twoFingerEdgeCtrlWheelActive = true;
         activatedNow = true;
+        RemoteInputEventLog.add('edge_ctrl_wheel_active');
         final excess = (_edgeCtrlLeftOutAccum - _edgeCtrlWheelDeadzonePx) +
             (_edgeCtrlRightOutAccum - _edgeCtrlWheelDeadzonePx);
         _edgeCtrlOutIntegral += excess / _edgeCtrlWheelPixelsPerStep;
