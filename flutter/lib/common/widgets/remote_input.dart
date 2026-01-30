@@ -60,12 +60,6 @@ bool isSpecialHoldDragActive = false;
 // Cache the last focal point to calculate deltas in special hold-drag mode.
 Offset _lastSpecialHoldDragFocalPoint = Offset.zero;
 
-enum _TwoFingerRemoteGestureMode {
-  undecided,
-  wheel,
-  ctrlWheel,
-}
-
 class RawTouchGestureDetectorRegion extends StatefulWidget {
   final Widget child;
   final FFI ffi;
@@ -95,10 +89,12 @@ class RawTouchGestureDetectorRegion extends StatefulWidget {
 ///   HoldDrag -> left drag
 class _RawTouchGestureDetectorRegionState
     extends State<RawTouchGestureDetectorRegion> {
-  // Note: DoubleFinerTapGestureRecognizer resolves on a timeout, so callback
-  // timestamps are delayed; keep this generous to still feel like a "double tap".
-  static const int _twoFingerDoubleTapTimeoutMs = 900;
-  static const int _twoFingerCtrlWheelArmTimeoutMs = 3000;
+  static const double _edgeCtrlWheelSideZoneFraction = 0.10;
+  static const double _edgeCtrlWheelDeadzoneBasePx = 14.0;
+  static const double _edgeCtrlWheelPixelsPerStepBasePx = 12.0;
+  static const double _edgeCtrlWheelDprBaseline = 2.75;
+  static const double _edgeCtrlWheelDprClampMin = 0.75;
+  static const double _edgeCtrlWheelDprClampMax = 1.25;
 
   Offset _cacheLongPressPosition = Offset(0, 0);
   // Timestamp of the last long press event.
@@ -106,16 +102,19 @@ class _RawTouchGestureDetectorRegionState
   double _mouseScrollIntegral = 0; // mouse scroll speed controller
   double _scale = 1;
   bool _twoFingerWheelActive = false;
-  _TwoFingerRemoteGestureMode _twoFingerGestureMode =
-      _TwoFingerRemoteGestureMode.undecided;
   Offset _twoFingerWheelLockedPos = Offset.zero;
   Offset _twoFingerWheelLastFocal = Offset.zero;
   double _twoFingerWheelIntegral = 0.0;
-  Offset _twoFingerCtrlWheelAnchorPos = Offset.zero;
-  double _twoFingerCtrlWheelIntegral = 0.0;
-  int _twoFingerTapTs = 0;
-  int _twoFingerCtrlWheelArmedUntilTs = 0;
-  bool _twoFingerCtrlWheelPendingConsume = false;
+  bool _twoFingerEdgeCtrlWheelCandidate = false;
+  bool _twoFingerEdgeCtrlWheelActive = false;
+  int? _edgeCtrlLeftPointer;
+  int? _edgeCtrlRightPointer;
+  Offset _edgeCtrlWheelAnchorPos = Offset.zero;
+  double _edgeCtrlWheelDeadzonePx = _edgeCtrlWheelDeadzoneBasePx;
+  double _edgeCtrlWheelPixelsPerStep = _edgeCtrlWheelPixelsPerStepBasePx;
+  double _edgeCtrlLeftOutAccum = 0.0;
+  double _edgeCtrlRightOutAccum = 0.0;
+  double _edgeCtrlOutIntegral = 0.0;
 
   int _suppressSingleTouchUntilTs = 0;
 
@@ -473,16 +472,6 @@ class _RawTouchGestureDetectorRegionState
 
     final isMobileTouchMode = isMobile && ffiModel.touchMode;
     if (isMobileTouchMode && _shouldUseTwoFingerRemoteWheelOrZoom()) {
-      final now = DateTime.now().millisecondsSinceEpoch;
-      final isDouble = (now - _twoFingerTapTs) <= _twoFingerDoubleTapTimeoutMs;
-      _twoFingerTapTs = now;
-      if (isDouble) {
-        _twoFingerCtrlWheelArmedUntilTs = now + _twoFingerCtrlWheelArmTimeoutMs;
-        RemoteInputEventLog.add(
-          'two_finger_arm_ctrl_wheel',
-          data: {'timeout_ms': _twoFingerCtrlWheelArmTimeoutMs},
-        );
-      }
       return;
     }
 
@@ -694,10 +683,16 @@ class _RawTouchGestureDetectorRegionState
   }
 
   bool _shouldUseTwoFingerRemoteWheelOrZoom() {
-    // Prefer mapping two-finger pinch to remote wheel/zoom (Ctrl+wheel) when we
-    // are controlling a non-mobile peer. This is useful both on mobile touch
-    // mode and on desktop touchscreens.
+    // Map two-finger gestures to remote wheel when controlling a non-mobile
+    // peer. This is useful both on mobile touch mode and on desktop touchscreens.
     return handleTouch && !ffiModel.isPeerMobile && !widget.isCamera;
+  }
+
+  double _edgeCtrlWheelDpiFactor() {
+    final dpr = MediaQueryData.fromView(View.of(context)).devicePixelRatio;
+    if (dpr <= 0) return 1.0;
+    return (_edgeCtrlWheelDprBaseline / dpr)
+        .clamp(_edgeCtrlWheelDprClampMin, _edgeCtrlWheelDprClampMax);
   }
 
   bool _getReverseMouseWheel() {
@@ -772,53 +767,104 @@ class _RawTouchGestureDetectorRegionState
     }
   }
 
-  Future<void> _twoFingerCtrlWheelByDeltaDy(double deltaDy) async {
-    final sensitivity = _getAndroidTwoFingerWheelSensitivity();
-    final reverseFactor = _getTwoFingerWheelReverseFactor();
-    // Convert continuous finger motion into discrete wheel steps.
-    const pixelsPerStep = 12.0;
-    _twoFingerCtrlWheelIntegral += (-deltaDy) / pixelsPerStep * sensitivity;
-    final anchor = _twoFingerCtrlWheelAnchorPos;
-    while (_twoFingerCtrlWheelIntegral >= 1) {
-      final step = 1 * reverseFactor;
-      final prevCtrl = inputModel.ctrl;
-      inputModel.ctrl = true;
-      try {
-        await inputModel.scroll(step);
-      } finally {
-        inputModel.ctrl = prevCtrl;
+  bool _isEdgeCtrlWheelStart(TwoFingerScaleStartDetails d) {
+    if (!isAndroid) return false;
+    final size = MediaQueryData.fromView(View.of(context)).size;
+    if (size.width <= 0) return false;
+    final zoneWidth = size.width * _edgeCtrlWheelSideZoneFraction;
+    if (zoneWidth <= 0) return false;
+
+    final aX = d.pointerALocalPosition.dx;
+    final bX = d.pointerBLocalPosition.dx;
+
+    final leftPointer = aX <= bX ? d.pointerA : d.pointerB;
+    final rightPointer = aX <= bX ? d.pointerB : d.pointerA;
+    final leftPos =
+        aX <= bX ? d.pointerALocalPosition : d.pointerBLocalPosition;
+    final rightPos =
+        aX <= bX ? d.pointerBLocalPosition : d.pointerALocalPosition;
+
+    final leftInZone = leftPos.dx <= zoneWidth;
+    final rightInZone = rightPos.dx >= (size.width - zoneWidth);
+    if (!leftInZone || !rightInZone) return false;
+
+    _twoFingerEdgeCtrlWheelCandidate = true;
+    _twoFingerEdgeCtrlWheelActive = false;
+    _edgeCtrlLeftPointer = leftPointer;
+    _edgeCtrlRightPointer = rightPointer;
+    _edgeCtrlWheelAnchorPos = d.localFocalPoint;
+    final factor = _edgeCtrlWheelDpiFactor();
+    _edgeCtrlWheelDeadzonePx = _edgeCtrlWheelDeadzoneBasePx * factor;
+    _edgeCtrlWheelPixelsPerStep = _edgeCtrlWheelPixelsPerStepBasePx * factor;
+    _edgeCtrlLeftOutAccum = 0.0;
+    _edgeCtrlRightOutAccum = 0.0;
+    _edgeCtrlOutIntegral = 0.0;
+    return true;
+  }
+
+  Future<void> _sendCtrlWheelStep(int step, Offset anchor) async {
+    // For browser zoom, keep step direction intuitive:
+    // outward => zoom in => wheel up (step < 0), inward => zoom out => wheel down.
+    final prevCtrl = inputModel.ctrl;
+    inputModel.ctrl = true;
+    try {
+      // Keep the anchor stable to avoid zooming at a drifting cursor location.
+      if (!ffi.cursorModel.shouldBlock(anchor.dx, anchor.dy) &&
+          ffi.cursorModel.isInRemoteRect(anchor)) {
+        await ffi.cursorModel.move(anchor.dx, anchor.dy);
       }
-      _twoFingerCtrlWheelIntegral -= 1;
-      RemoteInputEventLog.add(
-        'ctrl_wheel_v',
-        data: {
-          'x': anchor.dx.round(),
-          'y': anchor.dy.round(),
-          'dir': step > 0 ? 'down' : 'up',
-          'step': step,
-        },
-      );
+      await inputModel.scroll(step);
+    } finally {
+      inputModel.ctrl = prevCtrl;
     }
-    while (_twoFingerCtrlWheelIntegral <= -1) {
-      final step = -1 * reverseFactor;
-      final prevCtrl = inputModel.ctrl;
-      inputModel.ctrl = true;
-      try {
-        await inputModel.scroll(step);
-      } finally {
-        inputModel.ctrl = prevCtrl;
+  }
+
+  Future<bool> _handleEdgeCtrlWheelUpdate(TwoFingerScaleUpdateDetails d) async {
+    if (!_twoFingerEdgeCtrlWheelCandidate) return false;
+    final leftPointer = _edgeCtrlLeftPointer;
+    final rightPointer = _edgeCtrlRightPointer;
+    if (leftPointer == null || rightPointer == null) return false;
+
+    Offset deltaOf(int pointer) {
+      if (pointer == d.pointerA) return d.pointerADelta;
+      if (pointer == d.pointerB) return d.pointerBDelta;
+      return Offset.zero;
+    }
+
+    final leftDeltaX = deltaOf(leftPointer).dx;
+    final rightDeltaX = deltaOf(rightPointer).dx;
+
+    var activatedNow = false;
+    if (!_twoFingerEdgeCtrlWheelActive) {
+      _edgeCtrlLeftOutAccum += max(0.0, -leftDeltaX);
+      _edgeCtrlRightOutAccum += max(0.0, rightDeltaX);
+      if (_edgeCtrlLeftOutAccum >= _edgeCtrlWheelDeadzonePx &&
+          _edgeCtrlRightOutAccum >= _edgeCtrlWheelDeadzonePx) {
+        _twoFingerEdgeCtrlWheelActive = true;
+        activatedNow = true;
+        final excess = (_edgeCtrlLeftOutAccum - _edgeCtrlWheelDeadzonePx) +
+            (_edgeCtrlRightOutAccum - _edgeCtrlWheelDeadzonePx);
+        _edgeCtrlOutIntegral += excess / _edgeCtrlWheelPixelsPerStep;
+        _edgeCtrlLeftOutAccum = _edgeCtrlWheelDeadzonePx;
+        _edgeCtrlRightOutAccum = _edgeCtrlWheelDeadzonePx;
+      } else {
+        return true;
       }
-      _twoFingerCtrlWheelIntegral += 1;
-      RemoteInputEventLog.add(
-        'ctrl_wheel_v',
-        data: {
-          'x': anchor.dx.round(),
-          'y': anchor.dy.round(),
-          'dir': step > 0 ? 'down' : 'up',
-          'step': step,
-        },
-      );
     }
+
+    if (!activatedNow) {
+      final outwardDelta = (-leftDeltaX) + (rightDeltaX);
+      _edgeCtrlOutIntegral += outwardDelta / _edgeCtrlWheelPixelsPerStep;
+    }
+    while (_edgeCtrlOutIntegral >= 1.0) {
+      await _sendCtrlWheelStep(-1, _edgeCtrlWheelAnchorPos);
+      _edgeCtrlOutIntegral -= 1.0;
+    }
+    while (_edgeCtrlOutIntegral <= -1.0) {
+      await _sendCtrlWheelStep(1, _edgeCtrlWheelAnchorPos);
+      _edgeCtrlOutIntegral += 1.0;
+    }
+    return true;
   }
 
   onTwoFingerScaleStartEx(TwoFingerScaleStartDetails d) async {
@@ -843,20 +889,16 @@ class _RawTouchGestureDetectorRegionState
 
     if (_shouldUseTwoFingerRemoteWheelOrZoom()) {
       _suppressSingleTouch();
-      _twoFingerWheelActive = true;
-      final now = DateTime.now().millisecondsSinceEpoch;
-      if (_twoFingerCtrlWheelArmedUntilTs != 0 &&
-          now > _twoFingerCtrlWheelArmedUntilTs) {
-        _twoFingerCtrlWheelArmedUntilTs = 0;
+      _twoFingerEdgeCtrlWheelCandidate = false;
+      _twoFingerEdgeCtrlWheelActive = false;
+      _edgeCtrlLeftPointer = null;
+      _edgeCtrlRightPointer = null;
+      if (_isEdgeCtrlWheelStart(d)) {
+        _twoFingerWheelActive = false;
+        return;
       }
-      final armed = now <= _twoFingerCtrlWheelArmedUntilTs;
-      _twoFingerGestureMode = armed
-          ? _TwoFingerRemoteGestureMode.ctrlWheel
-          : _TwoFingerRemoteGestureMode.wheel;
+      _twoFingerWheelActive = true;
       _twoFingerWheelIntegral = 0.0;
-      _twoFingerCtrlWheelAnchorPos = Offset.zero;
-      _twoFingerCtrlWheelIntegral = 0.0;
-      _twoFingerCtrlWheelPendingConsume = armed;
       _twoFingerWheelLockedPos = d.localFocalPoint;
       _twoFingerWheelLastFocal = d.localFocalPoint;
       if (!ffi.cursorModel.isInRemoteRect(_twoFingerWheelLockedPos)) {
@@ -869,10 +911,6 @@ class _RawTouchGestureDetectorRegionState
           _twoFingerWheelLockedPos.dx, _twoFingerWheelLockedPos.dy)) {
         await ffi.cursorModel
             .move(_twoFingerWheelLockedPos.dx, _twoFingerWheelLockedPos.dy);
-      }
-      if (armed) {
-        // Anchor Ctrl+wheel to the initial two-finger touch point (A).
-        _twoFingerCtrlWheelAnchorPos = _twoFingerWheelLockedPos;
       }
     }
   }
@@ -893,42 +931,19 @@ class _RawTouchGestureDetectorRegionState
       return;
     }
 
-    // Mobile remote session: two-finger wheel; when armed -> Ctrl+wheel.
+    if (_shouldUseTwoFingerRemoteWheelOrZoom() &&
+        (isAndroid &&
+            (_twoFingerEdgeCtrlWheelCandidate ||
+                _twoFingerEdgeCtrlWheelActive))) {
+      final handled = await _handleEdgeCtrlWheelUpdate(d);
+      if (handled) return;
+    }
+
+    // Mobile remote session: two-finger wheel.
     if (_shouldUseTwoFingerRemoteWheelOrZoom() && _twoFingerWheelActive) {
       final delta = d.localFocalPoint - _twoFingerWheelLastFocal;
       _twoFingerWheelLastFocal = d.localFocalPoint;
-
-      if (_twoFingerGestureMode == _TwoFingerRemoteGestureMode.wheel) {
-        await _twoFingerWheelScrollByDelta(delta.dy);
-        return;
-      }
-
-      // Ctrl+wheel mode: if no scroll happened within the arm timeout, fall back
-      // to normal wheel.
-      if (_twoFingerCtrlWheelPendingConsume) {
-        final now = DateTime.now().millisecondsSinceEpoch;
-        if (_twoFingerCtrlWheelArmedUntilTs != 0 &&
-            now > _twoFingerCtrlWheelArmedUntilTs) {
-          _twoFingerGestureMode = _TwoFingerRemoteGestureMode.wheel;
-          _twoFingerCtrlWheelPendingConsume = false;
-          await _twoFingerWheelScrollByDelta(delta.dy);
-          return;
-        }
-        if (delta.dy != 0) {
-          // Consume Ctrl mode on the first scroll movement.
-          _twoFingerCtrlWheelPendingConsume = false;
-          _twoFingerCtrlWheelArmedUntilTs = 0;
-        }
-      }
-
-      final anchor = _twoFingerCtrlWheelAnchorPos;
-      if (!ffi.cursorModel.shouldBlock(anchor.dx, anchor.dy) &&
-          ffi.cursorModel.isInRemoteRect(anchor)) {
-        await ffi.cursorModel.move(anchor.dx, anchor.dy);
-      }
-      if (delta.dy != 0) {
-        await _twoFingerCtrlWheelByDeltaDy(delta.dy);
-      }
+      await _twoFingerWheelScrollByDelta(delta.dy);
       return;
     }
     // Android: keep two-finger gestures reserved for remote wheel/zoom above.
@@ -979,11 +994,15 @@ class _RawTouchGestureDetectorRegionState
     if (_shouldUseTwoFingerRemoteWheelOrZoom()) {
       _suppressSingleTouch();
       _twoFingerWheelActive = false;
-      _twoFingerGestureMode = _TwoFingerRemoteGestureMode.undecided;
       _twoFingerWheelIntegral = 0.0;
-      _twoFingerCtrlWheelAnchorPos = Offset.zero;
-      _twoFingerCtrlWheelIntegral = 0.0;
-      _twoFingerCtrlWheelPendingConsume = false;
+      _twoFingerEdgeCtrlWheelCandidate = false;
+      _twoFingerEdgeCtrlWheelActive = false;
+      _edgeCtrlLeftPointer = null;
+      _edgeCtrlRightPointer = null;
+      _edgeCtrlWheelAnchorPos = Offset.zero;
+      _edgeCtrlLeftOutAccum = 0.0;
+      _edgeCtrlRightOutAccum = 0.0;
+      _edgeCtrlOutIntegral = 0.0;
       _scale = 1;
       return;
     }
