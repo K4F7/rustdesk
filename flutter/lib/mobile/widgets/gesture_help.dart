@@ -39,6 +39,21 @@ class GestureIcons {
 typedef OnTouchModeChange = void Function(bool);
 typedef OnCanvasEditModeChange = void Function(bool);
 
+String _gestureHelpCanvasEditModeLabel() {
+  final label = translate("Canvas edit mode");
+  if (label != "Canvas edit mode") {
+    return label;
+  }
+  final l = localeName.toLowerCase();
+  if (!l.startsWith('zh')) {
+    return label;
+  }
+  if (l.contains('tw') || l.contains('hant') || l.contains('hk')) {
+    return '畫布編輯模式';
+  }
+  return '画布编辑模式';
+}
+
 class GestureHelp extends StatefulWidget {
   GestureHelp(
       {Key? key,
@@ -231,7 +246,7 @@ class _GestureHelpState extends State<GestureHelp> {
                         labels: [
                           translate("Mouse mode"),
                           translate("Touch mode"),
-                          translate("Canvas edit mode"),
+                          _gestureHelpCanvasEditModeLabel(),
                         ],
                         icons: [Icons.mouse, Icons.touch_app, Icons.crop_free],
                         onToggle: (index) {
