@@ -89,7 +89,8 @@ class RawTouchGestureDetectorRegion extends StatefulWidget {
 ///   HoldDrag -> left drag
 class _RawTouchGestureDetectorRegionState
     extends State<RawTouchGestureDetectorRegion> {
-  static const double _edgeCtrlWheelSideZoneFraction = 0.10;
+  static const double _separatedCtrlWheelMinSepXFraction = 0.60;
+  static const int _separatedCtrlWheelDecideWindowMs = 80;
   static const double _edgeCtrlWheelDeadzoneBasePx = 14.0;
   static const double _edgeCtrlWheelPixelsPerStepBasePx = 12.0;
   static const double _edgeCtrlWheelDprBaseline = 2.75;
@@ -112,8 +113,10 @@ class _RawTouchGestureDetectorRegionState
   Offset _edgeCtrlWheelAnchorPos = Offset.zero;
   double _edgeCtrlWheelDeadzonePx = _edgeCtrlWheelDeadzoneBasePx;
   double _edgeCtrlWheelPixelsPerStep = _edgeCtrlWheelPixelsPerStepBasePx;
-  double _edgeCtrlLeftOutAccum = 0.0;
-  double _edgeCtrlRightOutAccum = 0.0;
+  int _edgeCtrlWheelDecideUntilTs = 0;
+  double _edgeCtrlOutwardAccum = 0.0;
+  double _edgeCtrlInwardAccum = 0.0;
+  double _edgeCtrlAbsDyAccum = 0.0;
   double _edgeCtrlOutIntegral = 0.0;
 
   int _suppressSingleTouchUntilTs = 0;
@@ -775,26 +778,22 @@ class _RawTouchGestureDetectorRegionState
     }
   }
 
-  bool _isEdgeCtrlWheelStart(TwoFingerScaleStartDetails d) {
+  bool _isSeparatedCtrlWheelStart(TwoFingerScaleStartDetails d) {
     if (!isAndroid) return false;
     final size = _gestureRegionSize();
     if (size.width <= 0) return false;
-    final zoneWidth = size.width * _edgeCtrlWheelSideZoneFraction;
-    if (zoneWidth <= 0) return false;
 
     final aX = d.pointerALocalPosition.dx;
     final bX = d.pointerBLocalPosition.dx;
+    final sepX = (aX - bX).abs();
+    if (sepX / size.width < _separatedCtrlWheelMinSepXFraction) return false;
+
+    final inOppositeHalves = (aX < size.width / 2 && bX > size.width / 2) ||
+        (bX < size.width / 2 && aX > size.width / 2);
+    if (!inOppositeHalves) return false;
 
     final leftPointer = aX <= bX ? d.pointerA : d.pointerB;
     final rightPointer = aX <= bX ? d.pointerB : d.pointerA;
-    final leftPos =
-        aX <= bX ? d.pointerALocalPosition : d.pointerBLocalPosition;
-    final rightPos =
-        aX <= bX ? d.pointerBLocalPosition : d.pointerALocalPosition;
-
-    final leftInZone = leftPos.dx <= zoneWidth;
-    final rightInZone = rightPos.dx >= (size.width - zoneWidth);
-    if (!leftInZone || !rightInZone) return false;
 
     _twoFingerEdgeCtrlWheelCandidate = true;
     _twoFingerEdgeCtrlWheelActive = false;
@@ -804,14 +803,19 @@ class _RawTouchGestureDetectorRegionState
     final factor = _edgeCtrlWheelDpiFactor();
     _edgeCtrlWheelDeadzonePx = _edgeCtrlWheelDeadzoneBasePx * factor;
     _edgeCtrlWheelPixelsPerStep = _edgeCtrlWheelPixelsPerStepBasePx * factor;
-    _edgeCtrlLeftOutAccum = 0.0;
-    _edgeCtrlRightOutAccum = 0.0;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    _edgeCtrlWheelDecideUntilTs = now + _separatedCtrlWheelDecideWindowMs;
+    _edgeCtrlOutwardAccum = 0.0;
+    _edgeCtrlInwardAccum = 0.0;
+    _edgeCtrlAbsDyAccum = 0.0;
     _edgeCtrlOutIntegral = 0.0;
     RemoteInputEventLog.add(
-      'edge_ctrl_wheel_candidate',
+      'sep_ctrl_wheel_candidate',
       data: {
         'w': size.width.round(),
-        'zone_w': zoneWidth.round(),
+        'sep_x': sepX.round(),
+        'min_sep_x': (size.width * _separatedCtrlWheelMinSepXFraction).round(),
+        'decide_ms': _separatedCtrlWheelDecideWindowMs,
         'deadzone_px': _edgeCtrlWheelDeadzonePx.round(),
         'px_per_step': _edgeCtrlWheelPixelsPerStep.toStringAsFixed(2),
         'a_x': d.pointerALocalPosition.dx.round(),
@@ -852,30 +856,59 @@ class _RawTouchGestureDetectorRegionState
 
     final leftDeltaX = deltaOf(leftPointer).dx;
     final rightDeltaX = deltaOf(rightPointer).dx;
+    final leftDeltaY = deltaOf(leftPointer).dy;
+    final rightDeltaY = deltaOf(rightPointer).dy;
 
-    var activatedNow = false;
+    final outwardDelta = max(0.0, -leftDeltaX) + max(0.0, rightDeltaX);
+    final inwardDelta = max(0.0, leftDeltaX) + max(0.0, -rightDeltaX);
+    _edgeCtrlOutwardAccum += outwardDelta;
+    _edgeCtrlInwardAccum += inwardDelta;
+    _edgeCtrlAbsDyAccum += leftDeltaY.abs() + rightDeltaY.abs();
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final horiz = max(_edgeCtrlOutwardAccum, _edgeCtrlInwardAccum);
+    final vert = _edgeCtrlAbsDyAccum;
+    const dominance = 1.2;
+
     if (!_twoFingerEdgeCtrlWheelActive) {
-      _edgeCtrlLeftOutAccum += max(0.0, -leftDeltaX);
-      _edgeCtrlRightOutAccum += max(0.0, rightDeltaX);
-      if (_edgeCtrlLeftOutAccum >= _edgeCtrlWheelDeadzonePx &&
-          _edgeCtrlRightOutAccum >= _edgeCtrlWheelDeadzonePx) {
+      // Decide early if it clearly looks like a normal two-finger scroll.
+      if (vert >= _edgeCtrlWheelDeadzonePx && vert > dominance * horiz) {
+        _twoFingerEdgeCtrlWheelCandidate = false;
+        return false;
+      }
+
+      // Decide early if it clearly looks like an outward/inward split gesture.
+      if (horiz >= _edgeCtrlWheelDeadzonePx && horiz > dominance * vert) {
         _twoFingerEdgeCtrlWheelActive = true;
-        activatedNow = true;
-        RemoteInputEventLog.add('edge_ctrl_wheel_active');
-        final excess = (_edgeCtrlLeftOutAccum - _edgeCtrlWheelDeadzonePx) +
-            (_edgeCtrlRightOutAccum - _edgeCtrlWheelDeadzonePx);
-        _edgeCtrlOutIntegral += excess / _edgeCtrlWheelPixelsPerStep;
-        _edgeCtrlLeftOutAccum = _edgeCtrlWheelDeadzonePx;
-        _edgeCtrlRightOutAccum = _edgeCtrlWheelDeadzonePx;
+        RemoteInputEventLog.add(
+          'sep_ctrl_wheel_active',
+          data: {
+            'dir': _edgeCtrlOutwardAccum >= _edgeCtrlInwardAccum ? 'out' : 'in'
+          },
+        );
+        final excess = horiz - _edgeCtrlWheelDeadzonePx;
+        if (excess > 0) {
+          final sign =
+              _edgeCtrlOutwardAccum >= _edgeCtrlInwardAccum ? 1.0 : -1.0;
+          _edgeCtrlOutIntegral += sign * (excess / _edgeCtrlWheelPixelsPerStep);
+        }
+        _edgeCtrlOutwardAccum = 0.0;
+        _edgeCtrlInwardAccum = 0.0;
+        _edgeCtrlAbsDyAccum = 0.0;
       } else {
-        return true;
+        // Within the decide window, swallow updates so default wheel doesn't
+        // steal the gesture on incidental vertical movement.
+        if (now <= _edgeCtrlWheelDecideUntilTs) {
+          return true;
+        }
+        // Default to normal wheel after timeout.
+        _twoFingerEdgeCtrlWheelCandidate = false;
+        return false;
       }
     }
 
-    if (!activatedNow) {
-      final outwardDelta = (-leftDeltaX) + (rightDeltaX);
-      _edgeCtrlOutIntegral += outwardDelta / _edgeCtrlWheelPixelsPerStep;
-    }
+    final signedDelta = outwardDelta - inwardDelta;
+    _edgeCtrlOutIntegral += signedDelta / _edgeCtrlWheelPixelsPerStep;
     while (_edgeCtrlOutIntegral >= 1.0) {
       await _sendCtrlWheelStep(-1, _edgeCtrlWheelAnchorPos);
       _edgeCtrlOutIntegral -= 1.0;
@@ -913,7 +946,7 @@ class _RawTouchGestureDetectorRegionState
       _twoFingerEdgeCtrlWheelActive = false;
       _edgeCtrlLeftPointer = null;
       _edgeCtrlRightPointer = null;
-      if (_isEdgeCtrlWheelStart(d)) {
+      if (_isSeparatedCtrlWheelStart(d)) {
         _twoFingerWheelActive = false;
         return;
       }
@@ -1020,8 +1053,10 @@ class _RawTouchGestureDetectorRegionState
       _edgeCtrlLeftPointer = null;
       _edgeCtrlRightPointer = null;
       _edgeCtrlWheelAnchorPos = Offset.zero;
-      _edgeCtrlLeftOutAccum = 0.0;
-      _edgeCtrlRightOutAccum = 0.0;
+      _edgeCtrlWheelDecideUntilTs = 0;
+      _edgeCtrlOutwardAccum = 0.0;
+      _edgeCtrlInwardAccum = 0.0;
+      _edgeCtrlAbsDyAccum = 0.0;
       _edgeCtrlOutIntegral = 0.0;
       _scale = 1;
       return;
