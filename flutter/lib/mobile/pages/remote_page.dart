@@ -276,6 +276,12 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
         gFFI.invokeMethod("enable_soft_keyboard", false);
       }
     } else {
+      // If the remote input field isn't shown, don't request focus.
+      // Otherwise some IMEs (e.g. floating keyboard mode) may immediately re-open after we try to hide them.
+      if (!_showEdit) {
+        setState(() {});
+        return;
+      }
       _timer?.cancel();
       _timer = Timer(kMobileDelaySoftKeyboardFocus, () {
         SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
@@ -417,15 +423,30 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   }
 
   void _closeKeyboard() {
+    _timer?.cancel();
+    _timer = null;
     setState(() => _showEdit = false);
-    gFFI.invokeMethod("enable_soft_keyboard", false);
     _mobileFocusNode.unfocus();
+    if (isAndroid) {
+      // Best-effort: force Flutter text input channel to hide IME.
+      // Some IMEs (e.g. floating keyboard mode) may not hide reliably on focus change alone.
+      SystemChannels.textInput.invokeMethod('TextInput.hide');
+      // Ensure the text input connection is actually detached; otherwise some IMEs may re-show on next touch.
+      SystemChannels.textInput.invokeMethod('TextInput.clearClient');
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        gFFI.invokeMethod("enable_soft_keyboard", false);
+      });
+    } else {
+      gFFI.invokeMethod("enable_soft_keyboard", false);
+    }
     _physicalFocusNode.requestFocus();
   }
 
   void _toggleKeyboardFromDock() {
-    final visible = keyboardVisibilityController.isVisible && _showEdit;
-    if (visible) {
+    // In Android floating keyboard mode, `keyboardVisibilityController.isVisible` may stay false.
+    // Use `_showEdit` as the source of truth for the dock toggle state.
+    if (_showEdit) {
       _closeKeyboard();
     } else {
       openKeyboard();
@@ -936,7 +957,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
 
   Widget getBodyForMobile() {
     final keyboardIsVisible = keyboardVisibilityController.isVisible;
-    final dockKeyboardVisible = keyboardIsVisible && _showEdit;
+    final dockKeyboardVisible = _showEdit;
     final showToolDock = isAndroid && gFFI.ffiModel.pi.isSet.isTrue;
     final e2eEnabled = isAndroid &&
         kDebugMode &&

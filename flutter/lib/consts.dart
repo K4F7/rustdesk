@@ -248,6 +248,12 @@ const String kKeyUseAllMyDisplaysForTheRemoteSession =
 const String kKeyShowMonitorsToolbar = 'show_monitors_toolbar';
 const String kKeyReverseMouseWheel = "reverse_mouse_wheel";
 const String kKeyReverseTwoFingerScroll = "reverse_two_finger_scroll";
+// Touch gestures that simulate Ctrl+wheel zoom on mobile.
+// Values: 'Y' / 'N' (empty means default).
+const String kKeyEnableTwoFingerEdgeCtrlWheelZoom =
+    "enable_two_finger_edge_ctrl_wheel_zoom";
+const String kKeyEnableThreeFingerSwipeCtrlWheelZoom =
+    "enable_three_finger_swipe_ctrl_wheel_zoom";
 
 const String kMsgboxTextWaitingForImage = 'Connected, waiting for image...';
 

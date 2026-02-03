@@ -19,6 +19,7 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
 import android.media.MediaCodecInfo
 import android.media.MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface
 import android.media.MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar
@@ -26,6 +27,8 @@ import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.util.DisplayMetrics
 import androidx.annotation.RequiresApi
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import org.json.JSONArray
 import org.json.JSONObject
 import com.hjq.permissions.XXPermissions
@@ -218,12 +221,56 @@ class MainActivity : FlutterActivity() {
                 }
                 "enable_soft_keyboard" -> {
                     // https://blog.csdn.net/hanye2020/article/details/105553780
-                    if (call.arguments as Boolean) {
-                        window.clearFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM)
-                    } else {
-                        window.addFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM)
+                    activity.runOnUiThread {
+                        val enable = (call.arguments as Boolean)
+                        if (enable) {
+                            window.clearFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM)
+                        } else {
+                            // Prevent IME from re-attaching, and also actively dismiss it.
+                            // Some IMEs (e.g. floating keyboard mode) may keep showing even after changing flags.
+                            window.addFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM)
+                            try {
+                                val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                                // Prefer WindowInsetsController on newer Android/IME implementations.
+                                try {
+                                    WindowInsetsControllerCompat(window, window.decorView)
+                                        .hide(WindowInsetsCompat.Type.ime())
+                                } catch (_: Exception) {
+                                    // ignore
+                                }
+
+                                val views = linkedSetOf(
+                                    currentFocus,
+                                    window.currentFocus,
+                                    findViewById(android.R.id.content),
+                                    window.decorView,
+                                    window.decorView?.rootView,
+                                ).filterNotNull()
+
+                                var hidden = false
+                                for (v in views) {
+                                    hidden = imm.hideSoftInputFromWindow(
+                                        v.windowToken,
+                                        InputMethodManager.HIDE_NOT_ALWAYS
+                                    ) || hidden
+                                    hidden = imm.hideSoftInputFromWindow(
+                                        v.applicationWindowToken,
+                                        InputMethodManager.HIDE_NOT_ALWAYS
+                                    ) || hidden
+                                    v.clearFocus()
+                                }
+
+                                // Fallback: some IMEs ignore hideSoftInputFromWindow in floating mode.
+                                // HIDE_IMPLICIT_ONLY avoids forcing-show in most cases.
+                                if (!hidden) {
+                                    imm.toggleSoftInput(InputMethodManager.HIDE_IMPLICIT_ONLY, 0)
+                                }
+                            } catch (e: Exception) {
+                                Log.w(logTag, "Failed to hide soft keyboard: ${e.message}", e)
+                            }
+                        }
+                        result.success(true)
                     }
-                    result.success(true)
 
                 }
                 "try_sync_clipboard" -> {

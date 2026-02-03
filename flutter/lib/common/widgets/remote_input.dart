@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:math';
@@ -94,6 +95,7 @@ class _RawTouchGestureDetectorRegionState
   static const int _separatedCtrlWheelDecideWindowMs = 80;
   static const double _edgeCtrlWheelDeadzoneBasePx = 14.0;
   static const double _edgeCtrlWheelPixelsPerStepBasePx = 12.0;
+  static const double _threeFingerCtrlWheelPixelsPerStep = 4.0;
   static const double _edgeCtrlWheelDprBaseline = 2.75;
   static const double _edgeCtrlWheelDprClampMin = 0.75;
   static const double _edgeCtrlWheelDprClampMax = 1.25;
@@ -114,6 +116,9 @@ class _RawTouchGestureDetectorRegionState
   int? _edgeCtrlRightPointer;
   Offset _edgeCtrlWheelAnchorPos = Offset.zero;
   bool _sepCtrlWheelCtrlHeld = false;
+  bool _threeFingerCtrlWheelActive = false;
+  Offset _threeFingerCtrlWheelAnchorPos = Offset.zero;
+  double _threeFingerCtrlWheelIntegral = 0.0;
   double _edgeCtrlWheelDeadzonePx = _edgeCtrlWheelDeadzoneBasePx;
   double _edgeCtrlWheelPixelsPerStep = _edgeCtrlWheelPixelsPerStepBasePx;
   int _edgeCtrlWheelDecideUntilTs = 0;
@@ -121,6 +126,14 @@ class _RawTouchGestureDetectorRegionState
   double _edgeCtrlInwardAccum = 0.0;
   double _edgeCtrlAbsDyAccum = 0.0;
   double _edgeCtrlOutIntegral = 0.0;
+  final Map<int, Offset> _threeFingerRawPointers = {};
+  bool _threeFingerRawActive = false;
+  Offset _threeFingerRawAnchorPos = Offset.zero;
+  Offset _threeFingerRawLastFocal = Offset.zero;
+  double _threeFingerRawIntegral = 0.0;
+  bool _threeFingerRawCandidate = false;
+  int _threeFingerRawCandidateSinceTs = 0;
+  Timer? _threeFingerRawEndTimer;
   bool _gestureDiagInitLogged = false;
 
   int _suppressSingleTouchUntilTs = 0;
@@ -189,10 +202,154 @@ class _RawTouchGestureDetectorRegionState
 
   @override
   Widget build(BuildContext context) {
-    return RawGestureDetector(
-      child: widget.child,
-      gestures: makeGestures(context),
+    return Listener(
+      onPointerDown: _onRawPointerDown,
+      onPointerMove: _onRawPointerMove,
+      onPointerUp: _onRawPointerUp,
+      onPointerCancel: _onRawPointerCancel,
+      child: RawGestureDetector(
+        child: widget.child,
+        gestures: makeGestures(context),
+      ),
     );
+  }
+
+  Offset _threeFingerRawFocal() {
+    if (_threeFingerRawPointers.isEmpty) return Offset.zero;
+    var sumX = 0.0;
+    var sumY = 0.0;
+    for (final pos in _threeFingerRawPointers.values) {
+      sumX += pos.dx;
+      sumY += pos.dy;
+    }
+    final n = _threeFingerRawPointers.length.toDouble();
+    return Offset(sumX / n, sumY / n);
+  }
+
+  void _endThreeFingerRaw({required String reason}) {
+    _threeFingerRawEndTimer?.cancel();
+    _threeFingerRawEndTimer = null;
+    if (_threeFingerRawActive || _threeFingerRawCandidate) {
+      _gestureDiag('three_finger_raw_end', {
+        'reason': reason,
+        'n': _threeFingerRawPointers.length,
+      });
+    }
+    _threeFingerRawActive = false;
+    _threeFingerRawCandidate = false;
+    _threeFingerRawCandidateSinceTs = 0;
+    _threeFingerRawIntegral = 0.0;
+    _threeFingerRawAnchorPos = Offset.zero;
+    _threeFingerRawLastFocal = Offset.zero;
+    _threeFingerRawPointers.clear();
+    _setSepCtrlWheelCtrlHeld(false);
+  }
+
+  void _onRawPointerDown(PointerDownEvent e) {
+    lastDeviceKind = e.kind;
+    if (!_shouldUseThreeFingerCtrlWheelZoom()) return;
+    if (e.kind != PointerDeviceKind.touch) return;
+    _threeFingerRawPointers[e.pointer] = e.localPosition;
+    _threeFingerRawEndTimer?.cancel();
+    _threeFingerRawEndTimer = null;
+    if (!_threeFingerRawActive && _threeFingerRawPointers.length == 3) {
+      _suppressSingleTouch();
+      _threeFingerRawCandidate = true;
+      _threeFingerRawCandidateSinceTs = DateTime.now().millisecondsSinceEpoch;
+      _threeFingerRawIntegral = 0.0;
+      _threeFingerRawAnchorPos = _threeFingerRawFocal();
+      _threeFingerRawLastFocal = _threeFingerRawAnchorPos;
+      _gestureDiag('three_finger_raw_candidate', {
+        'keyboardPerm': inputModel.keyboardPerm,
+        'x': _threeFingerRawAnchorPos.dx,
+        'y': _threeFingerRawAnchorPos.dy,
+      });
+    }
+  }
+
+  void _onRawPointerMove(PointerMoveEvent e) async {
+    if (!_threeFingerRawActive && !_threeFingerRawCandidate) {
+      if (_threeFingerRawPointers.containsKey(e.pointer)) {
+        _threeFingerRawPointers[e.pointer] = e.localPosition;
+      }
+      return;
+    }
+    if (!_threeFingerRawPointers.containsKey(e.pointer)) return;
+    _threeFingerRawPointers[e.pointer] = e.localPosition;
+    if (_threeFingerRawPointers.length < 3) return;
+    _suppressSingleTouch();
+    final focal = _threeFingerRawFocal();
+    final delta = focal - _threeFingerRawLastFocal;
+    _threeFingerRawLastFocal = focal;
+    if (!_threeFingerRawActive) {
+      // Activate only after we see a real movement while holding 3 pointers.
+      const activateMinAbsDy = 2.0;
+      if (delta.dy.abs() < activateMinAbsDy) return;
+      final now = DateTime.now().millisecondsSinceEpoch;
+      if (_threeFingerRawCandidate &&
+          _threeFingerRawCandidateSinceTs > 0 &&
+          now - _threeFingerRawCandidateSinceTs > 800) {
+        _endThreeFingerRaw(reason: 'activate_timeout');
+        return;
+      }
+      _threeFingerRawActive = true;
+      _threeFingerRawCandidate = false;
+      _setSepCtrlWheelCtrlHeld(true);
+      _gestureDiag('three_finger_raw_start', {
+        'keyboardPerm': inputModel.keyboardPerm,
+        'x': _threeFingerRawAnchorPos.dx,
+        'y': _threeFingerRawAnchorPos.dy,
+      });
+    } else {
+      // Re-assert Ctrl during active gesture.
+      _setSepCtrlWheelCtrlHeld(true);
+    }
+    _threeFingerRawIntegral += delta.dy / _threeFingerCtrlWheelPixelsPerStep;
+    while (_threeFingerRawIntegral >= 1.0) {
+      await _sendCtrlWheelStep(1, _threeFingerRawAnchorPos);
+      RemoteInputEventLog.add('ctrl_wheel', data: {'dir': 'down'});
+      _threeFingerRawIntegral -= 1.0;
+    }
+    while (_threeFingerRawIntegral <= -1.0) {
+      await _sendCtrlWheelStep(-1, _threeFingerRawAnchorPos);
+      RemoteInputEventLog.add('ctrl_wheel', data: {'dir': 'up'});
+      _threeFingerRawIntegral += 1.0;
+    }
+  }
+
+  void _onRawPointerUp(PointerUpEvent e) {
+    if (_threeFingerRawPointers.containsKey(e.pointer)) {
+      _threeFingerRawPointers.remove(e.pointer);
+    }
+    if ((_threeFingerRawActive || _threeFingerRawCandidate) &&
+        _threeFingerRawPointers.length < 3) {
+      // Grace window: some devices briefly jitter pointer count.
+      _threeFingerRawEndTimer?.cancel();
+      _threeFingerRawEndTimer = Timer(const Duration(milliseconds: 120), () {
+        if (!mounted) return;
+        if ((_threeFingerRawActive || _threeFingerRawCandidate) &&
+            _threeFingerRawPointers.length < 3) {
+          _endThreeFingerRaw(reason: 'pointer_up');
+        }
+      });
+    }
+  }
+
+  void _onRawPointerCancel(PointerCancelEvent e) {
+    if (_threeFingerRawPointers.containsKey(e.pointer)) {
+      _threeFingerRawPointers.remove(e.pointer);
+    }
+    if ((_threeFingerRawActive || _threeFingerRawCandidate) &&
+        _threeFingerRawPointers.length < 3) {
+      _threeFingerRawEndTimer?.cancel();
+      _threeFingerRawEndTimer = Timer(const Duration(milliseconds: 120), () {
+        if (!mounted) return;
+        if ((_threeFingerRawActive || _threeFingerRawCandidate) &&
+            _threeFingerRawPointers.length < 3) {
+          _endThreeFingerRaw(reason: 'pointer_cancel');
+        }
+      });
+    }
   }
 
   bool isNotTouchBasedDevice() {
@@ -716,6 +873,31 @@ class _RawTouchGestureDetectorRegionState
     return handleTouch && !ffiModel.isPeerMobile && !widget.isCamera;
   }
 
+  bool _shouldUseThreeFingerCtrlWheelZoom() {
+    // Android touch: map three-finger vertical swipe to Ctrl+wheel (zoom).
+    // Keep disabled when controlling Android peers.
+    return isAndroid &&
+        _shouldUseTwoFingerRemoteWheelOrZoom() &&
+        _getEnableThreeFingerSwipeCtrlWheelZoom() &&
+        !ffiModel.isPeerAndroid;
+  }
+
+  bool _getEnableTwoFingerEdgeCtrlWheelZoom() {
+    final raw = bind.mainGetUserDefaultOption(
+        key: kKeyEnableTwoFingerEdgeCtrlWheelZoom);
+    // Default: enabled (backward compatible).
+    if (raw.isEmpty) return true;
+    return raw == 'Y';
+  }
+
+  bool _getEnableThreeFingerSwipeCtrlWheelZoom() {
+    final raw = bind.mainGetUserDefaultOption(
+        key: kKeyEnableThreeFingerSwipeCtrlWheelZoom);
+    // Default: disabled (often intercepted by system gestures).
+    if (raw.isEmpty) return false;
+    return raw == 'Y';
+  }
+
   double _edgeCtrlWheelDpiFactor() {
     final dpr = MediaQueryData.fromView(View.of(context)).devicePixelRatio;
     if (dpr <= 0) return 1.0;
@@ -827,8 +1009,18 @@ class _RawTouchGestureDetectorRegionState
     }
   }
 
+  Future<void> _sendCtrlWheelStep(int step, Offset anchor) async {
+    // Keep the anchor stable to avoid zooming at a drifting cursor location.
+    if (!ffi.cursorModel.shouldBlock(anchor.dx, anchor.dy) &&
+        ffi.cursorModel.isInRemoteRect(anchor)) {
+      await ffi.cursorModel.move(anchor.dx, anchor.dy);
+    }
+    await inputModel.scroll(step);
+  }
+
   bool _isSeparatedCtrlWheelStart(TwoFingerScaleStartDetails d) {
     if (!isAndroid) return false;
+    if (!_getEnableTwoFingerEdgeCtrlWheelZoom()) return false;
     final size = _gestureRegionSize();
     if (size.width <= 0) return false;
 
@@ -875,40 +1067,18 @@ class _RawTouchGestureDetectorRegionState
     _edgeCtrlInwardAccum = 0.0;
     _edgeCtrlAbsDyAccum = 0.0;
     _edgeCtrlOutIntegral = 0.0;
-    RemoteInputEventLog.add(
-      'sep_ctrl_wheel_candidate',
-      data: {
-        'w': size.width.round(),
-        'sep_x': sepX.round(),
-        'min_sep_x': (size.width * _separatedCtrlWheelMinSepXFraction).round(),
-        'decide_ms': _separatedCtrlWheelDecideWindowMs,
-        'deadzone_px': _edgeCtrlWheelDeadzonePx.round(),
-        'px_per_step': _edgeCtrlWheelPixelsPerStep.toStringAsFixed(2),
-        'a_x': d.pointerALocalPosition.dx.round(),
-        'b_x': d.pointerBLocalPosition.dx.round(),
-      },
-    );
     _gestureDiag('sep_ctrl_wheel_candidate', {
       'w': size.width,
       'sep_x': sepX,
       'min_sep_x': size.width * _separatedCtrlWheelMinSepXFraction,
       'decide_ms': _separatedCtrlWheelDecideWindowMs,
-      'a_x': d.pointerALocalPosition.dx,
-      'b_x': d.pointerBLocalPosition.dx,
+      'a_x': aX,
+      'b_x': bX,
       'dpr': MediaQueryData.fromView(View.of(context)).devicePixelRatio,
       'deadzone_px': _edgeCtrlWheelDeadzonePx,
       'px_per_step': _edgeCtrlWheelPixelsPerStep,
     });
     return true;
-  }
-
-  Future<void> _sendCtrlWheelStep(int step, Offset anchor) async {
-    // Keep the anchor stable to avoid zooming at a drifting cursor location.
-    if (!ffi.cursorModel.shouldBlock(anchor.dx, anchor.dy) &&
-        ffi.cursorModel.isInRemoteRect(anchor)) {
-      await ffi.cursorModel.move(anchor.dx, anchor.dy);
-    }
-    await inputModel.scroll(step);
   }
 
   Future<bool> _handleEdgeCtrlWheelUpdate(TwoFingerScaleUpdateDetails d) async {
@@ -955,12 +1125,6 @@ class _RawTouchGestureDetectorRegionState
       if (horiz >= _edgeCtrlWheelDeadzonePx && horiz > dominance * vert) {
         _twoFingerEdgeCtrlWheelActive = true;
         _setSepCtrlWheelCtrlHeld(true);
-        RemoteInputEventLog.add(
-          'sep_ctrl_wheel_active',
-          data: {
-            'dir': _edgeCtrlOutwardAccum >= _edgeCtrlInwardAccum ? 'out' : 'in'
-          },
-        );
         _gestureDiag('sep_ctrl_wheel_active', {
           'dir': _edgeCtrlOutwardAccum >= _edgeCtrlInwardAccum ? 'out' : 'in',
           'vert': vert,
@@ -1169,12 +1333,76 @@ class _RawTouchGestureDetectorRegionState
   }
 
   get onHoldDragCancel => null;
-  get onThreeFingerVerticalDragUpdate => ffi.ffiModel.isPeerAndroid
+
+  get onThreeFingerVerticalDragStart => ffiModel.isPeerAndroid
       ? null
-      : (d) {
+      : (DragStartDetails d) {
+          if (_threeFingerRawActive) return;
+          if (isCanvasEditMode) return;
+          _suppressSingleTouch();
+          if (_shouldUseThreeFingerCtrlWheelZoom()) {
+            _threeFingerCtrlWheelActive = true;
+            _threeFingerCtrlWheelAnchorPos = Offset.zero;
+            _threeFingerCtrlWheelIntegral = 0.0;
+            _setSepCtrlWheelCtrlHeld(true);
+            _gestureDiag('three_finger_ctrl_wheel_start', {
+              'keyboardPerm': inputModel.keyboardPerm,
+            });
+          }
+        };
+
+  get onThreeFingerVerticalDragEnd => ffiModel.isPeerAndroid
+      ? null
+      : (DragEndDetails d) {
+          if (_threeFingerRawActive) return;
+          if (_threeFingerCtrlWheelActive) {
+            _threeFingerCtrlWheelActive = false;
+            _threeFingerCtrlWheelIntegral = 0.0;
+            _threeFingerCtrlWheelAnchorPos = Offset.zero;
+            _setSepCtrlWheelCtrlHeld(false);
+            _gestureDiag('three_finger_ctrl_wheel_end');
+          }
+        };
+
+  get onThreeFingerVerticalDragUpdate => ffiModel.isPeerAndroid
+      ? null
+      : (DragUpdateDetails d) async {
+          if (_threeFingerRawActive) return;
           if (isCanvasEditMode) {
             return;
           }
+          if (_shouldUseThreeFingerCtrlWheelZoom()) {
+            _suppressSingleTouch();
+            // Re-assert Ctrl on each update to avoid losing it if the gesture
+            // temporarily switches states (e.g. pointer count jitter).
+            _setSepCtrlWheelCtrlHeld(true);
+            if (!_threeFingerCtrlWheelActive) {
+              _threeFingerCtrlWheelActive = true;
+              _threeFingerCtrlWheelIntegral = 0.0;
+              _threeFingerCtrlWheelAnchorPos = d.localPosition;
+              _gestureDiag('three_finger_ctrl_wheel_active', {
+                'x': _threeFingerCtrlWheelAnchorPos.dx,
+                'y': _threeFingerCtrlWheelAnchorPos.dy,
+              });
+            } else if (_threeFingerCtrlWheelAnchorPos == Offset.zero) {
+              _threeFingerCtrlWheelAnchorPos = d.localPosition;
+            }
+            _threeFingerCtrlWheelIntegral +=
+                d.delta.dy / _threeFingerCtrlWheelPixelsPerStep;
+            while (_threeFingerCtrlWheelIntegral >= 1.0) {
+              await _sendCtrlWheelStep(1, _threeFingerCtrlWheelAnchorPos);
+              RemoteInputEventLog.add('ctrl_wheel', data: {'dir': 'down'});
+              _threeFingerCtrlWheelIntegral -= 1.0;
+            }
+            while (_threeFingerCtrlWheelIntegral <= -1.0) {
+              await _sendCtrlWheelStep(-1, _threeFingerCtrlWheelAnchorPos);
+              RemoteInputEventLog.add('ctrl_wheel', data: {'dir': 'up'});
+              _threeFingerCtrlWheelIntegral += 1.0;
+            }
+            return;
+          }
+
+          // Fallback: map three-finger vertical drag to wheel scroll.
           _mouseScrollIntegral += d.delta.dy / 4;
           if (_mouseScrollIntegral > 1) {
             inputModel.scroll(1);
@@ -1239,7 +1467,9 @@ class _RawTouchGestureDetectorRegionState
           ..onTwoFingerScaleStartEx = onTwoFingerScaleStartEx
           ..onTwoFingerScaleUpdateEx = onTwoFingerScaleUpdateEx
           ..onTwoFingerScaleEndEx = onTwoFingerScaleEndEx
-          ..onThreeFingerVerticalDragUpdate = onThreeFingerVerticalDragUpdate;
+          ..onThreeFingerVerticalDragStart = onThreeFingerVerticalDragStart
+          ..onThreeFingerVerticalDragUpdate = onThreeFingerVerticalDragUpdate
+          ..onThreeFingerVerticalDragEnd = onThreeFingerVerticalDragEnd;
       }),
     };
   }

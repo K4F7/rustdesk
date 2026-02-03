@@ -85,6 +85,8 @@ class _GestureHelpState extends State<GestureHelp> {
   double _wheelScrollSensitivity = 1.0;
   bool _reverseMouseWheel = false;
   bool _reverseTwoFingerScroll = false;
+  bool _enableTwoFingerEdgeCtrlWheelZoom = true;
+  bool _enableThreeFingerSwipeCtrlWheelZoom = false;
 
   _GestureHelpState(
       bool touchMode, bool canvasEditMode, VirtualMouseMode virtualMouseMode)
@@ -195,6 +197,31 @@ class _GestureHelpState extends State<GestureHelp> {
         key: kKeyReverseTwoFingerScroll, value: v);
   }
 
+  void _loadCtrlWheelZoomGestures() {
+    final edgeRaw = bind.mainGetUserDefaultOption(
+        key: kKeyEnableTwoFingerEdgeCtrlWheelZoom);
+    final threeRaw = bind.mainGetUserDefaultOption(
+        key: kKeyEnableThreeFingerSwipeCtrlWheelZoom);
+    setState(() {
+      _enableTwoFingerEdgeCtrlWheelZoom =
+          edgeRaw.isEmpty ? true : edgeRaw == 'Y';
+      _enableThreeFingerSwipeCtrlWheelZoom =
+          threeRaw.isEmpty ? false : threeRaw == 'Y';
+    });
+  }
+
+  Future<void> _storeEnableTwoFingerEdgeCtrlWheelZoom(bool v) async {
+    await bind.mainSetUserDefaultOption(
+        key: kKeyEnableTwoFingerEdgeCtrlWheelZoom, value: v ? 'Y' : 'N');
+    setState(() => _enableTwoFingerEdgeCtrlWheelZoom = v);
+  }
+
+  Future<void> _storeEnableThreeFingerSwipeCtrlWheelZoom(bool v) async {
+    await bind.mainSetUserDefaultOption(
+        key: kKeyEnableThreeFingerSwipeCtrlWheelZoom, value: v ? 'Y' : 'N');
+    setState(() => _enableThreeFingerSwipeCtrlWheelZoom = v);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -202,6 +229,7 @@ class _GestureHelpState extends State<GestureHelp> {
     _loadWheelSensitivity();
     _loadReverseMouseWheel();
     _loadReverseTwoFingerScroll();
+    _loadCtrlWheelZoomGestures();
   }
 
   /// Helper to exit relative mouse mode when certain conditions are met.
@@ -437,6 +465,71 @@ class _GestureHelpState extends State<GestureHelp> {
                                                 !_reverseMouseWheel)
                                             : null,
                                         child: const Text('滑轮条反向'),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Transform.translate(
+                                  offset: const Offset(-10.0, 0.0),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Checkbox(
+                                        value:
+                                            _enableTwoFingerEdgeCtrlWheelZoom,
+                                        onChanged: (widget.inputModel != null &&
+                                                widget
+                                                    .inputModel!.keyboardPerm &&
+                                                !widget.inputModel!.isViewOnly)
+                                            ? (value) {
+                                                if (value == null) return;
+                                                _storeEnableTwoFingerEdgeCtrlWheelZoom(
+                                                    value);
+                                              }
+                                            : null,
+                                      ),
+                                      InkWell(
+                                        onTap: (widget.inputModel != null &&
+                                                widget
+                                                    .inputModel!.keyboardPerm &&
+                                                !widget.inputModel!.isViewOnly)
+                                            ? () => _storeEnableTwoFingerEdgeCtrlWheelZoom(
+                                                !_enableTwoFingerEdgeCtrlWheelZoom)
+                                            : null,
+                                        child: const Text('双指边缘缩放 (Ctrl+滚轮)'),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Transform.translate(
+                                  offset: const Offset(-10.0, 0.0),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Checkbox(
+                                        value:
+                                            _enableThreeFingerSwipeCtrlWheelZoom,
+                                        onChanged: (widget.inputModel != null &&
+                                                widget
+                                                    .inputModel!.keyboardPerm &&
+                                                !widget.inputModel!.isViewOnly)
+                                            ? (value) {
+                                                if (value == null) return;
+                                                _storeEnableThreeFingerSwipeCtrlWheelZoom(
+                                                    value);
+                                              }
+                                            : null,
+                                      ),
+                                      InkWell(
+                                        onTap: (widget.inputModel != null &&
+                                                widget
+                                                    .inputModel!.keyboardPerm &&
+                                                !widget.inputModel!.isViewOnly)
+                                            ? () => _storeEnableThreeFingerSwipeCtrlWheelZoom(
+                                                !_enableThreeFingerSwipeCtrlWheelZoom)
+                                            : null,
+                                        child: const Text('三指上下滑缩放 (Ctrl+滚轮)'),
                                       ),
                                     ],
                                   ),

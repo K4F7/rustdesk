@@ -186,8 +186,9 @@ class _ViewCameraPageState extends State<ViewCameraPage>
 
   @override
   Widget build(BuildContext context) {
-    final keyboardIsVisible =
-        keyboardVisibilityController.isVisible && _showEdit;
+    // In Android floating keyboard mode, `keyboardVisibilityController.isVisible` may stay false.
+    // Use `_showEdit` as the source of truth for our toggle state.
+    final keyboardIsVisible = _showEdit;
     final showActionButton = !_showBar || keyboardIsVisible || _showGestureHelp;
 
     return WillPopScope(
@@ -211,17 +212,28 @@ class _ViewCameraPageState extends State<ViewCameraPage>
                     color: Colors.white,
                   ),
                   backgroundColor: MyTheme.accent,
-                  onPressed: () {
-                    setState(() {
-                      if (keyboardIsVisible) {
-                        _showEdit = false;
-                        gFFI.invokeMethod("enable_soft_keyboard", false);
-                        _mobileFocusNode.unfocus();
-                        _physicalFocusNode.requestFocus();
-                      } else if (_showGestureHelp) {
-                        _showGestureHelp = false;
-                      } else {
-                        _showBar = !_showBar;
+                      onPressed: () {
+                        setState(() {
+                          if (keyboardIsVisible) {
+                            _showEdit = false;
+                            _mobileFocusNode.unfocus();
+                            if (isAndroid) {
+                              SystemChannels.textInput
+                                  .invokeMethod('TextInput.hide');
+                              SystemChannels.textInput
+                                  .invokeMethod('TextInput.clearClient');
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                if (!mounted) return;
+                                gFFI.invokeMethod("enable_soft_keyboard", false);
+                              });
+                            } else {
+                              gFFI.invokeMethod("enable_soft_keyboard", false);
+                            }
+                            _physicalFocusNode.requestFocus();
+                          } else if (_showGestureHelp) {
+                            _showGestureHelp = false;
+                          } else {
+                            _showBar = !_showBar;
                       }
                     });
                   }),

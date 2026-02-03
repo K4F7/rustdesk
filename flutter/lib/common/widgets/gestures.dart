@@ -320,6 +320,7 @@ class HoldTapMoveGestureRecognizer extends GestureRecognizer {
   GestureDragEndCallback? onHoldDragEnd;
 
   bool _isStart = false;
+  bool _isResetting = false;
 
   Timer? _firstTapUpTimer;
   Timer? _secondTapDownTimer;
@@ -400,7 +401,8 @@ class HoldTapMoveGestureRecognizer extends GestureRecognizer {
           }
         }
       } else {
-        _reject(tracker);
+        _rejectTracker(tracker);
+        _reset();
       }
     } else if (event is PointerDownEvent) {
       if (_firstTap != null && _secondTap == null) {
@@ -410,7 +412,8 @@ class HoldTapMoveGestureRecognizer extends GestureRecognizer {
       if (!tracker.isWithinGlobalTolerance(event, kDoubleTapTouchSlop)) {
         if (_firstTap != null && _firstTap!.pointer == event.pointer) {
           // first tap move
-          _reject(tracker);
+          _rejectTracker(tracker);
+          _reset();
         } else if (_secondTap != null && _secondTap!.pointer == event.pointer) {
           // debugPrint("_secondTap move");
           // second tap move
@@ -426,7 +429,8 @@ class HoldTapMoveGestureRecognizer extends GestureRecognizer {
         }
       }
     } else if (event is PointerCancelEvent) {
-      _reject(tracker);
+      _rejectTracker(tracker);
+      _reset();
     }
   }
 
@@ -442,14 +446,23 @@ class HoldTapMoveGestureRecognizer extends GestureRecognizer {
     }
     // If tracker is still null, we rejected ourselves already
     if (tracker != null) {
-      _reject(tracker);
+      _rejectTracker(tracker);
+      _reset();
     }
   }
 
   void _resolve() {
     _stopSecondTapDownTimer();
-    _firstTap?.entry.resolve(GestureDisposition.accepted);
-    _secondTap?.entry.resolve(GestureDisposition.accepted);
+    final first = _firstTap;
+    if (first != null && !first.didResolve) {
+      first.didResolve = true;
+      first.entry.resolve(GestureDisposition.accepted);
+    }
+    final second = _secondTap;
+    if (second != null && !second.didResolve) {
+      second.didResolve = true;
+      second.entry.resolve(GestureDisposition.accepted);
+    }
     _isStart = true;
     // TODO start details
     if (onHoldDragStart != null) {
@@ -459,17 +472,15 @@ class HoldTapMoveGestureRecognizer extends GestureRecognizer {
     }
   }
 
-  void _reject(_TapTracker tracker) {
-    try {
-      _checkCancel();
-      _isStart = false;
-      _trackers.remove(tracker.pointer);
+  void _rejectTracker(_TapTracker tracker) {
+    _checkCancel();
+    _isStart = false;
+    _trackers.remove(tracker.pointer);
+    if (!tracker.didResolve) {
+      tracker.didResolve = true;
       tracker.entry.resolve(GestureDisposition.rejected);
-      _freezeTracker(tracker);
-      _reset();
-    } catch (e) {
-      debugPrint("Failed to _reject:$e");
     }
+    _freezeTracker(tracker);
   }
 
   @override
@@ -479,31 +490,29 @@ class HoldTapMoveGestureRecognizer extends GestureRecognizer {
   }
 
   void _reset() {
-    _isStart = false;
-    // debugPrint("reset");
-    _stopFirstTapUpTimer();
-    _stopSecondTapDownTimer();
-    if (_firstTap != null) {
-      if (_trackers.isNotEmpty) {
-        _checkCancel();
-      }
-      // Note, order is important below in order for the resolve -> reject logic
-      // to work properly.
-      final _TapTracker tracker = _firstTap!;
+    if (_isResetting) return;
+    _isResetting = true;
+    try {
+      _isStart = false;
+      // debugPrint("reset");
+      _stopFirstTapUpTimer();
+      _stopSecondTapDownTimer();
+      final first = _firstTap;
       _firstTap = null;
-      _reject(tracker);
-      GestureBinding.instance.gestureArena.release(tracker.pointer);
-
-      if (_secondTap != null) {
-        final _TapTracker tracker = _secondTap!;
-        _secondTap = null;
-        _reject(tracker);
-        GestureBinding.instance.gestureArena.release(tracker.pointer);
+      if (first != null) {
+        _rejectTracker(first);
+        GestureBinding.instance.gestureArena.release(first.pointer);
       }
+      final second = _secondTap;
+      _secondTap = null;
+      if (second != null) {
+        _rejectTracker(second);
+        GestureBinding.instance.gestureArena.release(second.pointer);
+      }
+      _clearTrackers();
+    } finally {
+      _isResetting = false;
     }
-    _firstTap = null;
-    _secondTap = null;
-    _clearTrackers();
   }
 
   void _registerFirstTap(_TapTracker tracker) {
@@ -532,8 +541,11 @@ class HoldTapMoveGestureRecognizer extends GestureRecognizer {
   }
 
   void _clearTrackers() {
-    _trackers.values.toList().forEach(_reject);
-    assert(_trackers.isEmpty);
+    final trackers = _trackers.values.toList(growable: false);
+    for (final tracker in trackers) {
+      _rejectTracker(tracker);
+    }
+    _trackers.clear();
   }
 
   void _freezeTracker(_TapTracker tracker) {
@@ -833,6 +845,7 @@ class _TapTracker {
   final _CountdownZoned _doubleTapMinTimeCountdown;
 
   bool _isTrackingPointer = false;
+  bool didResolve = false;
 
   void startTrackingPointer(PointerRoute route, Matrix4? transform) {
     if (!_isTrackingPointer) {
