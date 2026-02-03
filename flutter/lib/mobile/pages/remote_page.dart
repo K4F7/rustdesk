@@ -1278,6 +1278,12 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                 gFFI.ffiModel.setCanvasEditMode(v);
                 bind.mainSetLocalOption(
                     key: kOptionCanvasEditMode, value: v ? 'Y' : 'N');
+                if (v) {
+                  gFFI.canvasModel.updateSize();
+                  gFFI.canvasModel
+                      .restorePersistedMobileCanvasEditState()
+                      .then((_) {});
+                }
               },
               virtualMouseMode: gFFI.ffiModel.virtualMouseMode,
               inputModel: gFFI.inputModel,

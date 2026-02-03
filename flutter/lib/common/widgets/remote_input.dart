@@ -643,6 +643,7 @@ class _RawTouchGestureDetectorRegionState
       }
       ffi.canvasModel.panX(d.delta.dx);
       ffi.canvasModel.panY(d.delta.dy);
+      ffi.canvasModel.schedulePersistMobileCanvasEditState();
       return;
     }
     if (ffi.cursorModel.shouldBlock(d.localPosition.dx, d.localPosition.dy)) {
@@ -677,6 +678,7 @@ class _RawTouchGestureDetectorRegionState
       return;
     }
     if (isCanvasEditMode) {
+      await ffi.canvasModel.persistMobileCanvasEditStateNow();
       return;
     }
     if (isDesktop || isWebDesktop) {
@@ -1066,6 +1068,7 @@ class _RawTouchGestureDetectorRegionState
       _scale = d.scale;
       ffi.canvasModel.panX(d.focalPointDelta.dx);
       ffi.canvasModel.panY(d.focalPointDelta.dy);
+      ffi.canvasModel.schedulePersistMobileCanvasEditState();
       return;
     }
 
@@ -1127,6 +1130,7 @@ class _RawTouchGestureDetectorRegionState
       _suppressSingleTouch();
       _canvasEditTwoFingerActive = false;
       _scale = 1;
+      await ffi.canvasModel.persistMobileCanvasEditStateNow();
       return;
     }
     if (_shouldUseTwoFingerRemoteWheelOrZoom()) {

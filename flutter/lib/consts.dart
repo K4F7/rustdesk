@@ -135,6 +135,9 @@ const String kOptionLockAfterSessionEnd = "lock_after_session_end";
 const String kOptionPrivacyMode = "privacy_mode";
 const String kOptionTouchMode = "touch-mode";
 const String kOptionCanvasEditMode = "canvas-edit-mode";
+// Persist mobile canvas transform (pan/zoom) done in Canvas edit mode.
+// Stored as a JSON map keyed by "<peerId>@<displayIndex>".
+const String kOptionMobileCanvasEditState = "mobile-canvas-edit-state";
 const String kOptionI444 = "i444";
 const String kOptionSwapLeftRightMouse = "swap-left-right-mouse";
 const String kOptionCodecPreference = "codec-preference";

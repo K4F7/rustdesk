@@ -1352,7 +1352,8 @@ class FfiModel with ChangeNotifier {
         _touchMode = optSession != '';
       }
     }
-    _canvasEditMode = bind.mainGetLocalOption(key: kOptionCanvasEditMode) == 'Y';
+    _canvasEditMode =
+        bind.mainGetLocalOption(key: kOptionCanvasEditMode) == 'Y';
     if (isMobile) {
       virtualMouseMode.loadOptions();
     }
@@ -2170,6 +2171,7 @@ class CanvasModel with ChangeNotifier {
   ViewStyle _lastViewStyle = ViewStyle.defaultViewStyle();
 
   Timer? _timerMobileFocusCanvasCursor;
+  Timer? _timerPersistMobileCanvasEditState;
 
   // `isMobileCanvasChanged` is used to avoid canvas reset when changing the input method
   // after showing the soft keyboard.
@@ -2635,6 +2637,7 @@ class CanvasModel with ChangeNotifier {
     _scale = 1.0;
     _lastViewStyle = ViewStyle.defaultViewStyle();
     _timerMobileFocusCanvasCursor?.cancel();
+    _timerPersistMobileCanvasEditState?.cancel();
   }
 
   updateScrollPercent() {
@@ -2661,6 +2664,173 @@ class CanvasModel with ChangeNotifier {
       _resetCanvasOffset(getDisplayWidth(), getDisplayHeight());
       notifyListeners();
     });
+  }
+
+  String _mobileCanvasEditEntryKey() {
+    final peerId = id;
+    final display = parent.target?.ffiModel.pi.currentDisplay ?? 0;
+    return '$peerId@$display';
+  }
+
+  Map<String, dynamic> _decodeMobileCanvasEditStateRoot(String raw) {
+    if (raw.isEmpty) {
+      return {'v': 1, 'm': <String, dynamic>{}};
+    }
+    try {
+      final decoded = json.decode(raw);
+      if (decoded is Map<String, dynamic>) {
+        final v = decoded['v'];
+        final m = decoded['m'];
+        if ((v is int || v is num) && m is Map) {
+          return {
+            'v': (v is int) ? v : (v as num).toInt(),
+            'm': Map<String, dynamic>.from(m),
+          };
+        }
+      }
+    } catch (_) {
+      // fall through
+    }
+    return {'v': 1, 'm': <String, dynamic>{}};
+  }
+
+  double? _asFiniteDouble(dynamic v) {
+    if (v is num) {
+      final d = v.toDouble();
+      return d.isFinite ? d : null;
+    }
+    if (v is String) {
+      final d = double.tryParse(v);
+      if (d == null || !d.isFinite) return null;
+      return d;
+    }
+    return null;
+  }
+
+  int? _asInt(dynamic v) {
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    if (v is String) return int.tryParse(v);
+    return null;
+  }
+
+  Future<void> _persistMobileCanvasEditStateNow() async {
+    if (!isMobile) return;
+    if (id.isEmpty) return;
+
+    final entryKey = _mobileCanvasEditEntryKey();
+    if (entryKey.startsWith('@')) return;
+
+    final payload = <String, dynamic>{
+      'x': _x,
+      'y': _y,
+      'scale': _scale,
+      'scrollX': _scrollX,
+      'scrollY': _scrollY,
+      'viewW': size.width,
+      'viewH': size.height,
+      'dispW': getDisplayWidth(),
+      'dispH': getDisplayHeight(),
+      'ts': DateTime.now().millisecondsSinceEpoch,
+    };
+
+    final raw = bind.mainGetLocalOption(key: kOptionMobileCanvasEditState);
+    final root = _decodeMobileCanvasEditStateRoot(raw);
+    final m = (root['m'] as Map<String, dynamic>);
+    m[entryKey] = payload;
+
+    // Keep the stored map bounded.
+    const maxEntries = 50;
+    if (m.length > maxEntries) {
+      final keys = m.keys.toList();
+      keys.sort((a, b) {
+        final ta = _asInt((m[a] as Map?)?['ts']) ?? 0;
+        final tb = _asInt((m[b] as Map?)?['ts']) ?? 0;
+        return ta.compareTo(tb);
+      });
+      final toRemove = m.length - maxEntries;
+      for (var i = 0; i < toRemove; i++) {
+        m.remove(keys[i]);
+      }
+    }
+
+    await bind.mainSetLocalOption(
+        key: kOptionMobileCanvasEditState, value: json.encode(root));
+  }
+
+  void schedulePersistMobileCanvasEditState() {
+    if (!isMobile) return;
+    _timerPersistMobileCanvasEditState?.cancel();
+    _timerPersistMobileCanvasEditState =
+        Timer(const Duration(milliseconds: 250), () {
+      _persistMobileCanvasEditStateNow();
+    });
+  }
+
+  Future<void> persistMobileCanvasEditStateNow() async {
+    if (!isMobile) return;
+    _timerPersistMobileCanvasEditState?.cancel();
+    await _persistMobileCanvasEditStateNow();
+  }
+
+  Future<bool> restorePersistedMobileCanvasEditState(
+      {bool notify = true}) async {
+    if (!isMobile) return false;
+    if (id.isEmpty) return false;
+    updateSize();
+    final raw = bind.mainGetLocalOption(key: kOptionMobileCanvasEditState);
+    if (raw.isEmpty) return false;
+
+    final root = _decodeMobileCanvasEditStateRoot(raw);
+    final m = (root['m'] as Map<String, dynamic>);
+    final entryKey = _mobileCanvasEditEntryKey();
+    final entry = m[entryKey];
+    if (entry is! Map) return false;
+    final e = Map<String, dynamic>.from(entry);
+
+    final savedX = _asFiniteDouble(e['x']);
+    final savedY = _asFiniteDouble(e['y']);
+    final savedScale = _asFiniteDouble(e['scale']);
+    if (savedX == null || savedY == null || savedScale == null) return false;
+    if (savedScale <= 0) return false;
+
+    var nextX = savedX;
+    var nextY = savedY;
+    var nextScale = savedScale;
+
+    // Best-effort adapt offsets when view size changes.
+    final savedViewW = _asFiniteDouble(e['viewW']) ?? 0;
+    final savedViewH = _asFiniteDouble(e['viewH']) ?? 0;
+    if (savedViewW > 0 && savedViewH > 0 && size.width > 0 && size.height > 0) {
+      nextX = nextX * (size.width / savedViewW);
+      nextY = nextY * (size.height / savedViewH);
+    }
+
+    // Clamp scale to current image constraints if available.
+    if (parent.target?.imageModel.image != null) {
+      final maxs = parent.target?.imageModel.maxScale;
+      final mins = parent.target?.imageModel.minScale;
+      if (maxs != null && maxs.isFinite && maxs > 0) {
+        nextScale = min(nextScale, maxs);
+      }
+      if (mins != null && mins.isFinite && mins > 0) {
+        nextScale = max(nextScale, mins);
+      }
+    }
+
+    _x = nextX;
+    _y = nextY;
+    _scale = nextScale;
+    final savedScrollX = _asFiniteDouble(e['scrollX']);
+    final savedScrollY = _asFiniteDouble(e['scrollY']);
+    if (savedScrollX != null) _scrollX = savedScrollX;
+    if (savedScrollY != null) _scrollY = savedScrollY;
+    isMobileCanvasChanged = true;
+
+    if (notify) {
+      notifyListeners();
+    }
+    return true;
   }
 
   // mobile only
@@ -4119,6 +4289,9 @@ Future<void> initializeCursorAndCanvas(FFI ffi) async {
   if (p == null || currentDisplay != ffi.ffiModel.pi.currentDisplay) {
     ffi.cursorModel.updateDisplayOrigin(
         ffi.ffiModel.rect?.left ?? 0, ffi.ffiModel.rect?.top ?? 0);
+    if (isMobile) {
+      await ffi.canvasModel.restorePersistedMobileCanvasEditState();
+    }
     return;
   }
   double xCursor = p['xCursor'];
